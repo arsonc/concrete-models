@@ -1,0 +1,16 @@
+;fname: _braz2.dvr  %fist%\2d, PFC2D
+;
+; See description in _braz.dvr.
+; ===================================================================
+; Perform the entire test.
+;
+ SET p_close=1  ; load
+ SET p_islat=1
+mt_runtest
+et3_gd3_brazil
+;
+ SET md_tag_name='-bt1'
+md_save_state
+; ===================================================================
+return
+;EOF: _braz2.dvr

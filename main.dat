@@ -1,0 +1,11 @@
+config cppudm
+model load udm_normsoft_64.dll
+call sW_mL-spc.dvr
+call sW_mL_tA-tw.dvr
+
+new
+set cwdir C:\Users\pwang99\Desktop\epoxy\concrete_BT\simulaiton1
+restore sW_mL_tAbt-bt1.sav
+bonds_end
+bonds_output
+hist write 10 204 file force_strain.txt

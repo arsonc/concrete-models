@@ -1,0 +1,50 @@
+;fname: sW_mL_tA-tw.dvr  %fist%\templates\gen-3d, PFC3D
+;       Perform KIc, direct-tension, compression and Brazilian tests.
+;
+;  sW_mL-{spc} ===>
+;    sW_mL_tAkc-{tt0,tt1}       , sW_mL_tAkc-1.avi
+;    sW_mL_tAtt-{tt0,tt1}       , sW_mL_tAtt-1.avi
+;    sW_mL_tA{ucs,10}-{tw0,tw1} , sW_mL_tA{ucs,10}-1.avi
+;    sW_mL_tAbt-{bt0,bt1}       , sW_mL_tAbt-1.avi
+;
+; ===========================================================================
+set logfile sW_mLc_tA-tw.log
+set log on
+; **********************************************
+restore sW_mL-spc.SAV
+ set safe_conversion on
+ SET md_run_name='sW_mL_tAbt'
+ title 'sW_mL_tAbt'
+ call tAbt-param.dat
+ call _braz1.dvr
+
+ call ini_para_WP.dat
+ initial_para
+
+ call self_func.dat
+ bonds_ini
+
+ ;output_ball
+ set cwdir C:\Users\pwang99\Desktop\epoxy\concrete_BT\simulaiton1\aggrt
+ set extra contact 2
+ set extra ball 2
+ contact_output
+ 
+ pause
+ input_agg_info_DEM_del
+ ;input_agg_info_DEM
+ set cwdir C:\Users\pwang99\Desktop\epoxy\concrete_BT\simulaiton1
+ gen_voids_in_mortar
+ bonds_ini_c_component
+ save after_braz1.sav
+
+ new
+ restore after_braz1.SAV
+ loadingwall_size
+ 
+ SET avi_Ns=50 avi_Mag=1.5
+ call _braz2_avi.dvr
+; ===========================================================================
+set log off
+return
+;EOF: sW_mL_tA-tw.dvr

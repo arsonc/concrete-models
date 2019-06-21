@@ -1,0 +1,28 @@
+;fname: _braz2_avi.dvr
+;
+; Perform Brazilian test and make avi-movie of the test.
+; If no avi-movie is desired, then comment out avi_OpenIt & avi_CloseIt.
+; ===========================================================================
+ plot create BrazilTest_avi1
+ plot set title text &
+   'Brazilian test: axial force vs strain and cracks'
+ plot set caption off
+ plot set back white
+ plot set rot 0 0 0
+ avi_SetMag
+ plot add ball outline off yellow
+ plot add clump outline off yellow
+ plot add fish crk_item red blue red blue magenta black
+ ; Crack colors: {red, blue, magenta, black} =
+ ;               {grain tensile, grain shear, sj tensile, sj shear} fail
+ plot add fish et3_pi_brazil
+ plot add his -204 vs -10 xmin 0.0 ymin 0.0
+ ;
+ SET plot avi size 1024 768
+ SET avi_VID=6
+ ;avi_OpenIt
+ call _braz2.dvr
+ ;avi_CloseIt
+; ===========================================================================
+return
+;EOF: _braz2_avi.dvr

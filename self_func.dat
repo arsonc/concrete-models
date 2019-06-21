@@ -1,0 +1,619 @@
+;----------------------------------------------------
+def output_ball
+
+	bp = ball_head
+	total_ball =  0			
+	loop while bp # null
+		total_ball = total_ball +1
+		ballx(total_ball)=string(b_x(bp))
+		bally(total_ball)=string(b_y(bp))
+		ballz(total_ball)=string(b_z(bp))
+		ballid(total_ball)=string(b_id(bp))
+		bp=b_next(bp)
+		
+	end_loop
+
+status=open('ballx.txt', 1, 1)
+status=write(ballx, total_ball  )
+status=close
+
+status=open('bally.txt', 1, 1)
+status=write(bally, total_ball  )
+status=close
+
+status=open('ballz.txt', 1, 1)
+status=write(ballz, total_ball  )
+status=close
+
+status=open('ballid.txt', 1, 1)
+status=write(ballid, total_ball  )
+status=close
+
+end
+
+;----------------------------------------------------
+def input_agg_info_DEM
+
+	status  = open( 'DEM_aggsize.txt', 0 , 1 )
+	status  = read( agg_info , 1 )
+	agg_number = int(agg_info(1)) 
+	
+	status  = read( agg_info , agg_number ) ;read file is continued. So starts from second line.
+	status = close
+	ball_color_id = 1
+	loop ii (1,agg_number)
+		status = open('DEM_aggid_'+string(ii)+'.txt', 0 , 1 )		
+		clump_size_current = int(agg_info(ii))
+		if clump_size_current >= 1
+			status = read(temp_check,clump_size_current ) ; read clump_size_current lines to temp_check
+			status = close
+			loop mm(1,clump_size_current)
+				ballid_aggre = int( temp_check(mm) )
+				balladdress_aggre = find_ball( ballid_aggre )
+				b_kn( balladdress_aggre  ) = b_kn( balladdress_aggre  )*agg_E/ba_Ec(1)  ; aggregate ball stiffness
+				b_ks( balladdress_aggre  ) = b_ks( balladdress_aggre  )*agg_E/ba_Ec(1)  ; aggregate ball stiffness
+				b_extra(balladdress_aggre  ,1) = 1	; 0 is mortar, 1 is aggregate
+				b_extra(balladdress_aggre  ,2) = ii;
+				b_color(balladdress_aggre  ) = ball_color_id
+				;command
+				;	group aggregate range id @ballid_aggre @ballid_aggre
+				;end_command
+			end_loop
+		end_if
+
+		ball_color_id = ball_color_id +1
+		if ball_color_id >=12
+			ball_color_id = 1
+		end_if
+
+	end_loop
+	
+	status = open('DEM_aggcontact'+'.txt', 0 , 1 )
+	status = read( temp_check ,  1 )
+	contact_number = int( temp_check(1) )
+	status  = read( temp_check , contact_number +1 ) ;read file is continued. So starts from second line.	
+	status = close
+	loop ii(1,contact_number)
+		contact_extra = int( temp_check(ii) )
+		contact_pointer = a_contact_info( contact_extra , 8 )
+		if c_type( contact_pointer ) = 103
+			c_extra( contact_pointer , 2 ) = 2	;0 is mortar, 1 is agg-mortar interface, 2 is agg, 3 is agg-agg interface	
+			first_ball = c_ball1( contact_pointer )
+			second_ball = c_ball2( contact_pointer )
+			first_radius = b_rad( first_ball )
+			second_radius = b_rad( second_ball ) 
+			first_k = b_kn(first_ball)
+			second_k =b_kn(second_ball)
+
+			soft_nstrength = c_prop( contact_pointer, 'duc_ftmax')*agg_nstrength/pb_sn_mean(1)
+			soft_knball= first_k*second_k/(second_k+first_k)*2
+			para_beta1 = agg_E_frac*soft_knball*pi*((first_radius + second_radius)/2.0)^2/soft_nstrength^2-1 ;softening behavior based on aggregate contact fracture energy
+			soft_duc_knball = soft_knball/para_beta1
+
+			c_prop( contact_pointer, 'duc_ftmax') = soft_nstrength
+			c_prop( contact_pointer, 'duc_kduc') = soft_duc_knball
+			c_prop( contact_pointer, 'duc_kn') = soft_knball
+			c_prop( contact_pointer, 'duc_kun') = soft_knball 
+		end_if
+	end_loop
+
+	loop ii(1,counter_b )
+	;define the parameter of mortar and concrete interface.
+		cp = a_bonds_ini(ii,1)
+		first_ball  = c_ball1(cp)
+		second_ball = c_ball2(cp)
+		if pointer_type(second_ball) = 100
+			check_interface = abs( b_extra(first_ball,1)-b_extra(second_ball,1) )
+			if c_type( cp ) = 103
+				if check_interface = 1
+					a_bonds_ini(ii,15) = check_interface ; 0 is not interface, 1 is interface.
+					
+					first_ball = c_ball1( cp )
+					second_ball = c_ball2( cp )
+					first_radius = b_rad( first_ball )
+					second_radius = b_rad( second_ball ) 
+					first_k = b_kn(first_ball)
+					second_k =b_kn(second_ball)
+		
+					soft_nstrength = c_prop( cp, 'duc_ftmax')*	interaction_ratio
+					soft_knball= c_prop( cp, 'duc_kn')
+					;soft_knball= first_k*second_k/(second_k+first_k)*2
+					para_beta1 = interaction_ratio*E_fracture*soft_knball*pi*((first_radius + second_radius)/2.0)^2/soft_nstrength^2-1 ;softening behavior based on aggregate contact fracture energy
+					soft_duc_knball = soft_knball/para_beta1
+	
+					c_prop( cp, 'duc_ftmax') = soft_nstrength 
+					c_prop( cp, 'duc_kduc') = soft_duc_knball
+					c_prop( cp, 'duc_kn') = soft_knball
+					c_prop( cp, 'duc_kun') = soft_knball
+					c_extra( cp, 2 ) = 1 ; 0 is mortar, 1 is agg-mortar interface, 2 is agg, 3 is agg-agg interface	
+
+				end_if
+
+			
+				if b_extra(first_ball,1) = 1
+					if b_extra(second_ball ,1) = 1
+						check_agg_interface = abs(b_extra(first_ball,2)-b_extra(second_ball ,2)) 
+						if check_agg_interface # 0
+							first_ball = c_ball1( cp )
+							second_ball = c_ball2( cp )
+							first_radius = b_rad( first_ball )
+							second_radius = b_rad( second_ball ) 
+							first_k = b_kn(first_ball)
+							second_k =b_kn(second_ball)
+				
+							soft_nstrength = c_prop( cp, 'duc_ftmax')*	interaction_ratio
+							soft_knball= c_prop( cp, 'duc_kn')
+							;soft_knball= first_k*second_k/(second_k+first_k)*2
+							para_beta1 = interaction_ratio*E_fracture*soft_knball*pi*((first_radius + second_radius)/2.0)^2/soft_nstrength^2-1 ;softening behavior based on aggregate contact fracture energy
+							soft_duc_knball = soft_knball/para_beta1
+		
+							c_prop( cp, 'duc_ftmax') = soft_nstrength 
+							c_prop( cp, 'duc_kduc') = soft_duc_knball
+							c_prop( cp, 'duc_kn') = soft_knball
+							c_prop( cp, 'duc_kun') = soft_knball
+							c_extra( cp, 2 ) = 3 ; 0 is mortar, 1 is agg-mortar interface, 2 is agg, 3 is agg-agg interface
+						end_if
+					end_if						
+				end_if	
+			end_if
+		end_if
+	end_loop
+end
+;			if b_extra(first_ball,1) = 1
+;				if b_extra(second_ball ,1) = 1
+;					check_agg_interface = abs(b_extra(first_ball,2)-b_extra(second_ball ,2)) 
+;					if check_agg_interface # 0
+;						; aggregate interface
+;						c_model( cp ) = 'linear'
+;						c_extra( cp, 2 ) = 3 ; 0 is mortar, 1 is agg-mortar interface, 2 is agg, 3 is agg-agg interface	
+;					end_if
+;				end_if	
+;			end_if
+;---------------------------------------------------------------
+def crack_ball
+	starter = 1
+	crkp = crk_head
+
+	loop while crkp # null
+
+		fir_ball = b_id(mem(crkp+crk_BALL1))
+		sec_ball = b_id(mem(crkp+crk_BALL2))
+
+		crack_bond_bid1(starter) = string( fir_ball )
+		crack_bond_bid2(starter) = string( sec_ball )	
+		starter = starter + 1
+		crkp = mem(crkp+crk_NEXT)		
+	end_loop
+
+status=open('crack_ballid1.txt', 1, 1)
+status=write(crack_bond_bid1, starter-1  )
+status=close
+
+status=open('crack_ballid2.txt', 1, 1)
+status=write(crack_bond_bid2, starter-1  )
+status=close
+
+end
+;---------------------------------------------------------------
+def loadingwall_size
+	d_wall = find_wall( 1 ) 
+	d_wall_stiff1 = w_kn( d_wall )
+	d_wall_fric1 = w_fric( d_wall ) 
+	ii = w_delete( d_wall )
+ 
+	d_wall = find_wall( 2 ) 
+	d_wall_stiff2 = w_kn( d_wall )
+	d_wall_fric2 = w_fric( d_wall ) 
+	ii = w_delete( d_wall ) 	
+ ; --- Create the opposing x-walls
+  ;
+    _dely = 0.5 * wly * (l_ext - 1.0)
+    _delz = 0.5 * wlz * (l_ext - 1.0)
+    ;
+    _ptAx =      (0.5 * wlx)
+    _ptAy =      (0.5 * wly) + _dely
+    _ptAz =      0.02 * wlz
+    _ptBx =      _ptAx
+    _ptBy =      _ptAy
+    _ptBz = -1.0*_ptAz
+    _ptCx =      _ptAx
+    _ptCy = -1.0*_ptAy
+    _ptCz = -1.0*_ptAz
+    _ptDx =      _ptAx
+    _ptDy = -1.0*_ptAy
+    _ptDz =      _ptAz
+    command
+      wall id=1 kn = d_wall_stiff1   friction= d_wall_fric1 &
+		face @_ptAx,@_ptAy,@_ptAz &
+                     @_ptBx,@_ptBy,@_ptBz &
+                     @_ptCx,@_ptCy,@_ptCz &
+                     @_ptDx,@_ptDy,@_ptDz
+    end_command
+    wpx1 = find_wall(1)
+    wx1  = _ptAx
+    ;
+    _ptAx = -1.0*(0.5 * wlx)
+    _ptAy =      (0.5 * wly) + _dely
+    _ptAz =      0.02 * wlz
+    _ptBx =      _ptAx
+    _ptBy = -1.0*_ptAy
+    _ptBz =      _ptAz
+    _ptCx =      _ptAx
+    _ptCy = -1.0*_ptAy
+    _ptCz = -1.0*_ptAz
+    _ptDx =      _ptAx
+    _ptDy =      _ptAy
+    _ptDz = -1.0*_ptAz
+    command
+      wall id=2 kn = d_wall_stiff2   friction= d_wall_fric2 &
+		face @_ptAx,@_ptAy,@_ptAz &
+                     @_ptBx,@_ptBy,@_ptBz &
+                     @_ptCx,@_ptCy,@_ptCz &
+                     @_ptDx,@_ptDy,@_ptDz
+    end_command
+    wpx2 = find_wall(2)
+    wx2  = _ptAx
+
+end
+;---------------------------------------------------------------
+def bonds_ini
+	start_comp_cyc = cycle
+	cp = contact_head
+	counter_b = 0
+
+	loop while cp # null
+		counter_b = counter_b + 1
+		a_bonds_ini(counter_b,1) = cp
+		a_bonds_ini(counter_b,2) = c_ball1(cp)
+		a_bonds_ini(counter_b,3) = c_ball2(cp)
+		a_bonds_ini(counter_b,4) = c_x(cp)  
+		a_bonds_ini(counter_b,5) = c_y(cp) 
+		a_bonds_ini(counter_b,6) = c_z(cp) 
+		a_bonds_ini(counter_b,7) = c_type(cp) ;0 and 1 correspond with the linear and Hertz models, 3 udm_ductile
+		if c_type(cp) = 103
+			
+			a_bonds_ini(counter_b,8) = c_prop( cp, 'duc_broken')
+			a_bonds_ini(counter_b,9) = c_prop( cp, 'duc_softened')
+		else
+			a_bonds_ini(counter_b,8) = -100
+			a_bonds_ini(counter_b,9) = -100
+		end_if
+		a_bonds_ini(counter_b,10) = c_nforce(cp)
+		a_bonds_ini(counter_b,11) = 0
+		a_bonds_ini(counter_b,12) = c_xun( cp )
+		a_bonds_ini(counter_b,13) = c_yun( cp )
+		a_bonds_ini(counter_b,14) = c_zun( cp )
+		;contact_out_ini(counter_b)= string(string(a_bonds_ini(counter_b,1))+' '+string(a_bonds_ini(counter_b,2))+' '+ string(a_bonds_ini(counter_b,3))+' '+string(a_bonds_ini(counter_b,4))+' '+string(a_bonds_ini(counter_b,5))+' '+ string(a_bonds_ini(counter_b,6))+' '+string(a_bonds_ini(counter_b,7))+' '+string(a_bonds_ini(counter_b,8))+' '+string(a_bonds_ini(counter_b,9))+' '+string(a_bonds_ini(counter_b,10)))
+		cp =  c_next(cp)
+	end_loop
+
+end
+;---------------------------------------------------------------
+def bonds_end
+
+	loop ii(1,counter_b )
+		cp = a_bonds_ini(ii,1)
+		if cp # null
+			a_bonds_end(ii,1) = cp
+			a_bonds_end(ii,2) = c_ball1(cp)
+			a_bonds_end(ii,3) = c_ball2(cp)
+			a_bonds_end(ii,4) = c_x(cp)  
+			a_bonds_end(ii,5) = c_y(cp) 
+			a_bonds_end(ii,6) = c_z(cp)
+			a_bonds_end(ii,7) = c_type(cp)
+			if c_type(cp) = 103
+				a_bonds_end(ii,8) = c_prop( cp, 'duc_broken')
+				a_bonds_end(ii,9) = c_prop( cp, 'duc_softened')
+
+			else
+				a_bonds_end(ii,8) = -100
+				a_bonds_end(ii,9) = -100
+				
+			end_if
+			a_bonds_end(ii,10) = c_nforce(cp)
+			a_bonds_end(ii,11) = a_bonds_ini(ii,11)
+			a_bonds_end(ii,12) = a_bonds_ini(ii,12)
+			a_bonds_end(ii,13) = a_bonds_ini(ii,13)
+			a_bonds_end(ii,14) = a_bonds_ini(ii,14)
+			
+		else
+			a_bonds_end(ii,1) = cp
+			a_bonds_end(ii,2) = -100
+			a_bonds_end(ii,3) = -100
+			a_bonds_end(ii,4) = -100  
+			a_bonds_end(ii,5) = -100
+			a_bonds_end(ii,6) = -100
+			a_bonds_end(ii,7) = -100
+			a_bonds_end(ii,8) = -100
+			a_bonds_end(ii,9) = -100
+			a_bonds_end(ii,10) = -100
+			a_bonds_end(ii,11) = a_bonds_ini(ii,11)
+			a_bonds_end(ii,11) = a_bonds_ini(ii,11)
+			a_bonds_end(ii,12) = a_bonds_ini(ii,12)
+			a_bonds_end(ii,13) = a_bonds_ini(ii,13)
+			a_bonds_end(ii,14) = a_bonds_ini(ii,14)
+						
+		end_if
+		
+		;contact_out_end(ii)= string(string(a_bonds_end(ii,1))+' '+string(a_bonds_end(ii,2))+' '+ string(a_bonds_end(ii,3))+' '+string(a_bonds_end(ii,4))+' '+string(a_bonds_end(ii,5))+' '+ string(a_bonds_end(ii,6))+' '+string(a_bonds_end(ii,7))+' '+string(a_bonds_end(ii,8))+' '+string(a_bonds_end(ii,9))+' '+string(a_bonds_end(ii,10)))
+	end_loop
+	ii = out('start cycle is '+ string(start_comp_cyc ))
+
+end
+;---------------------------------------------------------------
+def bonds_ini_c_component
+
+	loop ii(1,counter_b )
+		cp = a_bonds_ini(ii,1)
+		if cp # null
+			a_bonds_components(ii) = string( c_extra(cp,2) );0 is mortar, 1 is agg-mortar interface, 2 is agg, 3 is agg-agg interface
+		else
+			a_bonds_components(ii) = string( -100 )
+
+		end_if
+	end_loop
+
+	status=open('a_bonds_component.txt', 1, 1)
+	status=write(a_bonds_components, counter_b  )
+	status=close	
+
+end
+;---------------------------------------------------------------
+def bonds_output
+	loop ii(1,counter_b )
+		contact_out_ini(ii) = string(string(a_bonds_ini(ii,1))+' '+string(a_bonds_ini(ii,2))+' '+ string(a_bonds_ini(ii,3))+' '+string(a_bonds_ini(ii,4))+' '+string(a_bonds_ini(ii,5))+' '+ string(a_bonds_ini(ii,6))+' '+string(a_bonds_ini(ii,7))+' '+string(a_bonds_ini(ii,8))+' '+string(a_bonds_ini(ii,9))+' '+string(a_bonds_ini(ii,10))+' '+string(a_bonds_ini(ii,11))+' '+string(a_bonds_ini(ii,15)))	
+		contact_out_norm(ii) = string(string(a_bonds_ini(ii,12))+' '+string(a_bonds_ini(ii,13))+' '+string(a_bonds_ini(ii,14)))
+		contact_out_end(ii) = string(string(a_bonds_end(ii,1))+' '+string(a_bonds_end(ii,2))+' '+ string(a_bonds_end(ii,3))+' '+string(a_bonds_end(ii,4))+' '+string(a_bonds_end(ii,5))+' '+ string(a_bonds_end(ii,6))+' '+string(a_bonds_end(ii,7))+' '+string(a_bonds_end(ii,8))+' '+string(a_bonds_end(ii,9))+' '+string(a_bonds_end(ii,10))+' '+string(a_bonds_end(ii,11)))
+	end_loop
+	status=open('contact_out_ini.txt', 1, 1)
+	status=write(contact_out_ini, counter_b  )
+	status=close
+
+	status=open('contact_out_norm.txt', 1, 1)
+	status=write(contact_out_norm, counter_b  )
+	status=close
+
+	status=open('contact_out_end.txt', 1, 1)
+	status=write(contact_out_end, counter_b  )
+	status=close
+end
+;---------------------------------------------------------------
+def check_broken_step
+	WHILESTEPPING
+	check_current_cycle = check_current_cycle + 1
+	if check_current_cycle > 200
+		check_current_cycle = 0
+		loop ii(1,counter_b)
+			cp = a_bonds_ini(ii,1)
+			if cp # null
+				if  a_bonds_ini(ii,7)= 103 ;normsoft model
+				;if  a_bonds_ini(ii,7)= 3 ;ductile model
+					if c_type(cp) = 0
+						type_chage = a_bonds_ini(ii,7) - c_type(cp)
+						if type_chage = 103
+						;if type_chage = 3
+							if a_bonds_ini(ii,11) = 0
+								a_bonds_ini(ii,11) = cycle
+								a_bonds_end(ii,11) = cycle
+							end_if
+						end_if
+					end_if
+	
+					if c_type(cp) = 103
+					;if c_type(cp) = 3
+						broken_change = abs(a_bonds_ini(ii,8) - c_prop(cp,'duc_broken'));
+						if broken_change = 1
+							if a_bonds_ini(ii,11) = 0
+								a_bonds_ini(ii,11) = cycle
+								a_bonds_end(ii,11) = cycle
+							end_if
+						end_if
+					end_if
+				end_if
+
+
+			else
+				if  a_bonds_ini(ii,7)= 103
+				;if  a_bonds_ini(ii,7)= 3
+					if a_bonds_ini(ii,11) = 0
+						a_bonds_ini(ii,11) = cycle
+						a_bonds_end(ii,11) = cycle
+					end_if
+				end_if
+	
+			end_if
+		end_loop
+	end_if
+end
+;---------------------------------------------------------------
+def beta_calculation
+	
+	S_energy = 75	;unit in N/m
+	cp = contact_head
+	counter = 0
+	loop while cp # null
+		if c_type( cp ) = 103
+			counter = counter + 1
+			first_ball = c_ball1( cp )
+			second_ball = c_ball2( cp )
+			first_radius = b_rad( first_ball )
+			second_radius = b_rad( second_ball ) 
+			
+			beta_current = S_energy*c_prop( cp, 'duc_kn')*pi*((first_radius + second_radius)/2.0)^2/c_prop( cp, 'duc_ftmax')^2-1
+			para_beta( counter ) = 	string(beta_current )			
+			 
+		end_if
+		cp = c_next(cp)
+	end_loop
+	status=open('para_beta.txt', 1, 1)
+	status=write( para_beta , counter )
+	status=close
+end
+;---------------------------------------------------------------
+def contact_output
+	cp = contact_head
+	counter_c = 0
+
+	loop while cp # null
+		ball2_cp = c_ball2(cp)
+		ball2_type = pointer_type( ball2_cp )
+		if ball2_type = 100
+			counter_c = counter_c + 1
+			c_extra( cp, 1 ) = counter_c
+			a_contact_info(counter_c,1) = c_extra( cp, 1 ) 
+			a_contact_info(counter_c,2) = b_id( c_ball1(cp) )
+			a_contact_info(counter_c,3) = b_id( c_ball2(cp) )
+			a_contact_info(counter_c,4) = c_x(cp)  
+			a_contact_info(counter_c,5) = c_y(cp) 
+			a_contact_info(counter_c,6) = c_z(cp)
+			a_contact_info(counter_c,7) = c_type( cp )
+			a_contact_info(counter_c,8) = cp
+			
+		end_if
+		cp = c_next(cp)
+	end_loop
+	
+	loop ii(1,counter_c)
+		contact_info_out(ii) = string(string(a_contact_info(ii,1))+' '+string(a_contact_info(ii,2))+' '+string(a_contact_info(ii,3))+' '+string(a_contact_info(ii,4))+' '+string(a_contact_info(ii,5))+' '+string(a_contact_info(ii,6))+' '+string(a_contact_info(ii,7)))
+	end_loop
+	
+	status=open('contact_info_out.txt', 1, 1)
+	status=write(contact_info_out, counter_c  )
+	status=close
+end
+;---------------------------------------------------------------
+def gen_voids_in_mortar
+	
+	idmax = 0
+	idmin = 1000
+	total_ball = 0
+	bp = ball_head
+	loop while bp # null
+		;if b_extra( bp ,1) = 0 ;mortar sample
+			id_bp = b_id(bp)
+			if id_bp > idmax 
+				idmax = id_bp 
+			end_if
+			if id_bp < idmin 
+				idmin = id_bp 
+			end_if
+			total_ball = total_ball + 1
+		;end_if
+		bp = b_next(bp)
+	end_loop
+	ii = out(string( idmax ) + ' ' +string( idmin ))
+	total_pending_delete = round(target_void_ratio*total_ball )
+	total_deleted = 0
+	loop while total_deleted <total_pending_delete	 
+		delete_id = round(urand*(idmax - idmin )+ idmin )
+		bp_delete = find_ball(delete_id )
+		if bp_delete # null
+			if b_extra( bp_delete  ,1) = 0
+				ii = b_delete(bp_delete)
+				total_deleted = total_deleted +1
+			end_if
+		end_if
+	end_loop
+	ii = out(string(total_deleted)+' balls are deleted.')
+end
+;----------------------------------------------------
+def input_agg_info_DEM_del
+
+	status  = open( 'DEM_aggsize.txt', 0 , 1 )
+	status  = read( agg_info , 1 )
+	agg_number = int(agg_info(1)) 
+	
+	status  = read( agg_info , agg_number ) ;read file is continued. So starts from second line.
+	status = close
+	ball_color_id = 1
+	loop ii (1,agg_number)
+		status = open('DEM_aggid_'+string(ii)+'.txt', 0 , 1 )		
+		clump_size_current = int(agg_info(ii))
+		if clump_size_current >= 1
+			status = read(temp_check,clump_size_current ) ; read clump_size_current lines to temp_check
+			status = close
+			loop mm(1,clump_size_current)
+				ballid_aggre = int( temp_check(mm) )
+				balladdress_aggre = find_ball( ballid_aggre )
+				b_kn( balladdress_aggre  ) = b_kn( balladdress_aggre  )*agg_E/ba_Ec(1)  ; aggregate ball stiffness
+				b_ks( balladdress_aggre  ) = b_ks( balladdress_aggre  )*agg_E/ba_Ec(1)  ; aggregate ball stiffness
+				b_extra(balladdress_aggre  ,1) = 1	; 0 is mortar, 1 is aggregate
+				b_extra(balladdress_aggre  ,2) = ii;
+				b_color(balladdress_aggre  ) = ball_color_id
+				;command
+				;	group aggregate range id @ballid_aggre @ballid_aggre
+				;end_command
+			end_loop
+		end_if
+
+		ball_color_id = ball_color_id +1
+		if ball_color_id >=12
+			ball_color_id = 1
+		end_if
+
+	end_loop
+	
+	status = open('DEM_aggcontact'+'.txt', 0 , 1 )
+	status = read( temp_check ,  1 )
+	contact_number = int( temp_check(1) )
+	status  = read( temp_check , contact_number +1 ) ;read file is continued. So starts from second line.	
+	status = close
+	loop ii(1,contact_number)
+		contact_extra = int( temp_check(ii) )
+		contact_pointer = a_contact_info( contact_extra , 8 )
+		if c_type( contact_pointer ) = 103
+			c_extra( contact_pointer , 2 ) = 2	;0 is mortar, 1 is agg-mortar interface, 2 is agg, 3 is agg-agg interface	
+			first_ball = c_ball1( contact_pointer )
+			second_ball = c_ball2( contact_pointer )
+			first_radius = b_rad( first_ball )
+			second_radius = b_rad( second_ball ) 
+			first_k = b_kn(first_ball)
+			second_k =b_kn(second_ball)
+
+			soft_nstrength = c_prop( contact_pointer, 'duc_ftmax')*agg_nstrength/pb_sn_mean(1)
+			soft_knball= first_k*second_k/(second_k+first_k)*2
+			para_beta1 = agg_E_frac*soft_knball*pi*((first_radius + second_radius)/2.0)^2/soft_nstrength^2-1 ;softening behavior based on aggregate contact fracture energy
+			soft_duc_knball = soft_knball/para_beta1
+
+			c_prop( contact_pointer, 'duc_ftmax') = soft_nstrength
+			c_prop( contact_pointer, 'duc_kduc') = soft_duc_knball
+			c_prop( contact_pointer, 'duc_kn') = soft_knball
+			c_prop( contact_pointer, 'duc_kun') = soft_knball 
+		end_if
+	end_loop
+
+	loop ii(1,counter_b )
+	;define the parameter of mortar and concrete interface.
+		cp = a_bonds_ini(ii,1)
+		first_ball  = c_ball1(cp)
+		second_ball = c_ball2(cp)
+		if pointer_type(second_ball) = 100
+			check_interface = abs( b_extra(first_ball,1)-b_extra(second_ball,1) )
+			if c_type( cp ) = 103
+				if check_interface = 1
+					a_bonds_ini(ii,15) = check_interface ; 0 is not interface, 1 is interface.
+					delete_random = urand
+					if delete_random > interaction_ratio
+						c_model( cp ) = 'linear'
+					end_if
+					c_extra( cp, 2 ) = 1 ; 0 is mortar, 1 is agg-mortar interface, 2 is agg, 3 is agg-agg interface
+				end_if
+
+			
+				if b_extra(first_ball,1) = 1
+					if b_extra(second_ball ,1) = 1
+						check_agg_interface = abs(b_extra(first_ball,2)-b_extra(second_ball ,2)) 
+						if check_agg_interface # 0
+							a_bonds_ini(ii,15) = 3; 0 is not interface and inside agg, 1 is interface, 3 is  agg-agg interface
+							delete_random = urand
+							if delete_random > interaction_ratio
+								c_model( cp ) = 'linear'
+							end_if
+							c_extra( cp, 2 ) = 3 ; 0 is mortar, 1 is agg-mortar interface, 2 is agg, 3 is agg-agg interface
+						end_if
+					end_if						
+				end_if	
+			end_if
+		end_if
+	end_loop
+end

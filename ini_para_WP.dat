@@ -1,0 +1,30 @@
+def initial_para
+	array ballx(200000)
+	array bally(200000)
+	array ballz(200000)
+	array ballid(200000)
+	array agg_info(4000)
+	array temp_check(400000)
+	array crack_bond_bid1(50000)
+	array crack_bond_bid2(50000)
+	array para_beta( 700000 )
+
+	array a_bonds_ini(700000,15)
+	array contact_out_ini(700000 )
+	array contact_out_norm(700000 )
+
+	array a_bonds_end(700000,14)
+	array contact_out_end(700000 )
+	array a_bonds_components(700000 )
+	
+	array a_contact_info(700000,8)
+	array contact_info_out(700000)
+
+	agg_E = 29.50e9
+	agg_nstrength = 3.0e6
+	agg_E_frac = 60.0
+	
+	interaction_ratio = 0.7
+	target_void_ratio = 0.04
+end
+;-------------------------------------------------

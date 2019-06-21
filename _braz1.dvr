@@ -1,0 +1,70 @@
+;fname: _braz1.dvr  %fist%\2d, PFC2D
+;
+; See description in _braz.dvr.
+; ===================================================================
+SET echo off   ; load support functions
+  call %fist%\2d_3d\crk.fis
+SET echo on
+
+; ===================================================================
+SET mt_wnc=1  ; no need to correct wall-based strains
+mt_defaults
+et3_brazil_check
+et3_MapUserParams
+et3_wallstiff
+ini xvel 0.0 yvel 0.0 zvel 0.0 xspin 0.0 yspin 0.0 zspin 0.0
+ SET fishcall #FC_CYC_MOT et3_servo
+ SET et3_servo_xon=1 et3_servo_zon=1 et3_servo_yon=1
+  SET md_eq_rat = mt_eq_lim
+  SET md_eq_steps = mt_eq_Ns
+ md_eq
+; ===================================================================
+bt_sample_dimensions
+bt_carve
+ SET et3_servo_xon=1 et3_servo_zon=0 et3_servo_yon=0
+ SET bt_unloadfac=0.05
+bt_unloadzy
+md_eq
+ SET fishcall #FC_CYC_MOT et3_wf
+ SET fishcall 0 remove et3_servo
+ SET fishcall 0 remove et3_strains
+crk_init
+; ===================================================================
+; Install test monitoring variables and histories
+;
+history reset
+history nstep=20
+history id=1 crk_num      ; microcracking
+history id=2 crk_num_cnf
+history id=3 crk_num_csf
+history id=4 crk_num_pnf
+history id=5 crk_num_psf
+history id=6 crk_num_snf
+history id=7 crk_num_ssf
+;
+history id=10 et3_wexx    ; wall-derived stresses & strains
+history id=13 et3_wsxx
+;
+history id=204 et3_wfxx   ; wall-derived forces
+;
+trace energy on           ; energy quantities
+history id=30 energy boundary
+history id=31 energy bond
+history id=32 energy frictional
+history id=33 energy kinetic
+history id=34 energy strain
+history id=35 et3_e_delstrain ; increment of strain energy
+;
+bt_plotviews
+prop       xdisp=0.0 ydisp=0.0 zdisp=0.0
+clump prop xdisp=0.0 ydisp=0.0 zdisp=0.0
+wall id=3 xvel=0.0 yvel=0.0 zvel=0.0
+wall id=4 xvel=0.0 yvel=0.0 zvel=0.0
+wall id=5 xvel=0.0 yvel=0.0 zvel=0.0
+wall id=6 xvel=0.0 yvel=0.0 zvel=0.0
+;
+ SET md_tag_name = '-bt0'
+md_save_state
+; ===================================================================
+return
+;EOF: _braz1.dvr

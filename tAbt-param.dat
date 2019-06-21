@@ -1,0 +1,9 @@
+;fname: tAbt-param.dat  %fist%\templates\gen-3d, PFC3D
+;       PFC3D Brazilian Test
+;
+; ===========================================================================
+ SET mt_tas=-1.0e5  mt_tcs=-1.0e5
+ SET mt_code=1  mt_bt=100.0e-3  mt_psr=1.0
+; ===========================================================================
+return
+;EOF: tAbt-param.dat

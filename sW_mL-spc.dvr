@@ -1,0 +1,30 @@
+;fname: sW_mL-spc.dvr  %fist%\templates\gen-3d, PFC3D
+;       Create PFC3D parallelepiped specimen.
+;
+;   new => sW_mL-{spc}
+;
+; ===========================================================================
+set logfile sW_mL-spc1.log
+set log on
+; ------------------------------------------
+ new
+ set safe_conversion on
+ SET echo off  ; load support functions
+   call %fist%\fist_new.dvr
+   call %fist%\2d_3d\md_setup.fis
+   call mL-param.dat
+   call %fist%\2d_3d\md_wp3_sdevdiff_E_avek_cpp.fis
+   call %fist%\3d\et3_moretry.fis
+   call %fist%\2d_3d\flt.fis
+ SET echo on
+ SET md_run_name='sW_mL'
+ title 'sW_mL'
+  SET random 10999
+  SET mg_Rmin=1.0e-3
+  SET mv_Wx=151.6e-3 mv_Hp=101.6e-3 mv_Wz=151.6e-3
+  mg_matgen
+; ------------------------------------------
+set log off
+; ===========================================================================
+return
+;EOF: sW_mL-spc.dvr

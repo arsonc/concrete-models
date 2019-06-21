@@ -1,0 +1,3172 @@
+;fname: md.fis  %fist%\2d_3d, PFC2D/3D
+;
+; PURPOSE:  Generic functions that operate upon entire model.
+;
+;============================================================================
+def _md_stk_setup
+  _md_stk_size = 500
+end
+_md_stk_setup
+; ===================================================================
+def md_arrays
+  Array md_stress(dim, dim)  ; used by [md_b_stress]
+  Array _md_stk(_md_stk_size)
+  Array md_strength(4,6) ; bond strengths
+  Array md_cnt(4)
+;                          (1,*) - contact bond information (w/i clusters)
+;                          (2,*) - parallel bond information (w/i clusters)
+;                          (3,*) - contact bond information (btn. clusters)
+;                          (4,*) - parallel bond information (btn. clusters)
+;                          (*,1) - min  normal strength
+;                          (*,2) - mean normal strength
+;                          (*,3) - max  normal strength
+;                          (*,4) - min   shear strength
+;                          (*,5) - mean  shear strength
+;                          (*,6) - max   shear strength
+  Array _md_pt1(dim), _md_pt2(dim), _md_poly(dim, 4)
+  Array _clR(dim,dim)
+end
+; ===================================================================
+def md_b_stress
+;
+; ----- Computes the stress acting on ball [bp].
+;
+; INPUT:  bp                 - ball pointer
+; OUTPUT: md_stress(dim,dim) - stress tensor
+;
+  ii = b_stress(bp, md_stress)
+end
+; ====================================
+; Timing Package, to use:
+;
+;    SET md_timeStr='material genesis' md_timeFile='time1'
+;   md_timeStart
+;     ...Existing code...
+;   md_timeElapsed
+;
+;    SET md_timeStr='my lab test' md_timeFile='time2'
+;   md_timeStart
+;     ...Existing code...
+;   md_timeElapsed
+; ------------------------------------
+def md_timeStart
+;
+; INPUT: md_timeStr  - interval to be measured (string)
+;        md_timeFile - name of ASCII file (without .txt)
+;
+  _md_t0 = clock / 100.0  ; value in seconds
+end
+; ------------------------------------
+def _md_timeElapsed
+  Array _md_tBuf(2)
+  _fname = md_timeFile + '.txt'
+  ii=open( _fname, 1, 1 )
+    _md_tBuf(1) = _md_tStr1
+    _md_tBuf(2) = _md_tStr2
+    ii=write( _md_tBuf, 2 )
+  ii=close
+end
+; ------------------------------------
+def md_timeElapsed
+;
+; ----- Creates ASCII file (named <md_timeFile>.txt) of elapsed time.
+;
+  _md_t1 = clock / 100.0  ; value in seconds
+  _md_t10 = _md_t1 - _md_t0
+   if type(md_timeStr) # 3 then  ; not a string
+     md_timeStr = ''
+   end_if
+   _md_tStr1 = 'md_timeElapsed (sec.) during {' + md_timeStr + '}: '
+   _md_tStr2 = string(_md_t10)
+  _md_timeElapsed
+end
+; ===================================================================
+def mg_matgen
+;
+; ----- Invoke the material-genesis procedures.
+;
+; INPUT:    mv_per  - periodic-vessel flag, boolean
+;           cb_add  - boolean: if=1, generate contact-bonds
+;           pb_add  - boolean: if=1, generate parallel-bonds
+;           mg_quiet - boolean: if=1, create only *.spc save file
+;           see input-lists for all functions called within here
+;       3D ONLY:
+;           mv_shape = {0, polyaxial cell
+;                       1, sleeved triaxial cell
+;                       2, spherical cell}
+;             see [et3_setup] for additional parameters
+;
+; OUTPUT:   'md_run_name' 'bal'  core assembly (no cycling)
+;           'md_run_name' 'pck'  frictionless equilibrium
+;           'md_run_name' 'iso'  low isotropic stress
+;           'md_run_name' 'flt'  floaters eliminated (mg_shape = 0)
+;           'md_run_name' 'spc'  specimen
+;           If mv_per # 0 then
+;             'md_run_name' 'pbr'  pbrick
+;
+  mg_defaults
+  ba_defaults
+  pb_defaults
+  mg_set
+  if mg_dist = 0 then  ; --- Map params {mg_Rmin, mg_Rrat} into new params
+    mg_dsN = 1
+    mg_dsRmin(1) = mg_Rmin
+    mg_dsRrat(1) = mg_Rrat
+    mg_dsV(1) = 1.0
+  end_if
+  mg_check
+  if dim = 3 then
+    if mv_per # 0 then
+      if mv_shape # 0 then
+        error = 'Material genesis in periodic space requires [mv_shape]=0.'
+      end_if
+    end_if
+  end_if
+  if mv_per # 0 then
+    if mg_shape # 0 then
+      error = 'Material genesis in periodic space does not support clumps.'
+    end_if
+  end_if
+  ;
+  mv_SetVars
+  mp_set
+  if type(mg_mpNR(1)) = 1 then  ; not yet set, will work if arg is
+                                ; either 0 or a string
+    mg_mpNR(1) = 'mv_NR'
+  end_if
+  ; ================================== Create *-bal
+  if dim = 2 then
+    et2_setup
+  else
+    et3_setup
+  end_if
+  oo = mv_modify1
+  mg_plots
+  if mg_quiet = 0 then
+    md_tag_name = '-bal'
+    md_save_state
+  end_if
+  ; ================================== Create *-pck
+  mg_isopack
+  if mg_quiet = 0 then
+    md_tag_name = '-pck'
+    md_save_state
+  end_if
+  ; ================================== Create *-iso
+  if dim = 2 then
+    command
+      history nstep=50
+      history id=1 et2_sig0
+      history id=2 mg_iso_sfacTot
+    end_command
+  else ; dim = 3
+    command
+      history nstep=50
+      history id=1 et3_sig0
+      history id=2 mg_iso_sfacTot
+    end_command
+  end_if
+   _totvol = mv_vol
+  md_iso
+  if mg_quiet = 0 then
+    md_tag_name = '-iso'
+    md_save_state
+  end_if
+  ; ================================== Create *-flt
+  if mg_shape = 0 then
+    flt_eliminate
+    if mg_quiet = 0 then
+      md_tag_name = '-flt'
+      md_save_state
+    end_if
+  end_if
+  ; ================================== Create *-spc
+  command
+    SET update_contacts true  ; Ensure that all ball-ball contacts have
+      cycle 1                 ; correct geometric information.
+    SET update_contacts false
+  end_command
+  if cb_add = 1 then
+    md_set_balldeform=0
+    command
+      prop n_b=1.0 s_b=1.0  ; create contact bonds
+    end_command
+    md_cbprops              ; set contact-bond properties
+  end_if
+  if pb_add = 1 then
+    md_set_balldeform=0
+    command
+      prop pb_nstr=1.0 pb_sstr=1.0  ; create parallel bonds
+    end_command
+    md_pbprops                      ; set parallel-bond properties
+  end_if
+  if soft_add = 1 then
+  soft_nstrength = pb_sn_mean(1)*4.0*((mg_Rmin + mg_Rmin*mg_Rrat)/2.0)^2
+  ;soft_sstrength = pb_ss_mean(1)*4.0*((mg_Rmin + mg_Rmin*mg_Rrat)/2.0)^2 
+  soft_knball= 4*ba_Ec(1)*(mg_Rmin + mg_Rmin*mg_Rrat)/2.0
+  soft_duc_knball=soft_knball/50.0
+  command
+	Model udm_ductile
+	prop duc_fric=0.5 duc_ftmax=soft_nstrength duc_kduc=soft_duc_knball duc_kn=soft_knball duc_ratfs=10.0 duc_ratks=2.5 
+  prop pb_nstr=1.0 pb_sstr=1.0  ; create parallel bonds
+  end_command
+  
+  end_if
+  md_ballfric
+  md_balldens
+  command
+    SET dt auto
+    SET time 0.0  ; reset problem time
+    SET extra ball 0
+    history reset
+  end_command
+  md_tag_name = '-spc'
+  md_save_state
+  ; ================================== Create *-pbr
+  if mv_per # 0 then
+    command
+      cycle 100  ; force "natural" timestep before building a pbrick
+      build pbrick
+    end_command
+    md_tag_name = '-pbr'
+    md_save_state
+  end_if
+end
+; ===================================================================
+def mv_remove
+;
+; ----- Remove specimen from material vessel, then allow to relax.
+;
+; INPUT {md_eq_rat, md_eq_steps} (see [md_eq])
+;
+  if dim = 2 then
+    command
+      prop xdisp 0.0 ydisp 0.0
+      delete wall 1
+      delete wall 2
+      delete wall 3
+      delete wall 4
+    end_command
+  else ; dim = 3
+    case_of mv_shape
+      case 0 :
+        command
+          prop xdisp 0.0 ydisp 0.0 zdisp 0.0
+          delete wall 1
+          delete wall 2
+          delete wall 3
+          delete wall 4
+          delete wall 5
+          delete wall 6
+        end_command
+      case 1 :
+        command
+          prop xdisp 0.0 ydisp 0.0 zdisp 0.0
+          delete wall 3
+          delete wall 4
+          delete wall 7
+        end_command
+      case 2 :
+        command
+          prop xdisp 0.0 ydisp 0.0 zdisp 0.0
+          delete wall 1
+        end_command
+    end_case
+  end_if
+  md_eq
+end
+; ===================================================================
+def mg_defaults
+  loop _i (1, mg_dsN)
+    if mg_dsRrat(_i) = 0 then
+      mg_dsRrat(_i) = 1.5
+    end_if
+    if mg_dsV(_i) = 0 then
+      mg_dsV(_i) = float( 1.0 / mg_dsN )
+    end_if
+  end_loop
+  if mg_Rrat = 0 then
+    mg_Rrat = 1.5
+  end_if
+  if mg_rfAlpha = 0 then
+    mg_rfAlpha = 1.0
+  end_if
+  if mg_wfac = 0 then
+    mg_wfac = 1.1
+  end_if
+  if mg_ttol = 0 then
+    mg_ttol = 0.5
+  end_if
+  if mg_Nf = 0 then
+    mg_Nf = 3
+  end_if
+end
+def ba_defaults
+  loop _i (1, mg_mpN)
+    if ba_krat(_i) = 0 then
+      ba_krat(_i) = 2.5
+    end_if
+  end_loop
+end
+def pb_defaults
+  loop _i (1, mg_mpN)
+    if pb_Rmult(_i) = 0 then
+      pb_Rmult(_i) = 1.0
+    end_if
+    if pb_krat(_i) = 0 then
+      pb_krat(_i) = 2.5
+    end_if
+    if pb_mcf(_i) = 0 then
+      pb_mcf(_i) = 1.0
+    end_if
+  end_loop
+end
+def mt_defaults
+  if mt_pwfac = 0 then
+    mt_pwfac = 1.0
+  end_if
+  if mt_cwfac = 0 then
+    mt_cwfac = 0.1
+  end_if
+  if mt_ttol = 0 then
+    mt_ttol = 0.01
+  end_if
+  if mt_eq_lim = 0 then
+    mt_eq_lim = 1e-4
+  end_if
+  if mt_eq_Ns = 0 then
+    mt_eq_Ns = 10000
+  end_if
+  if mt_pn = 0 then
+    mt_pn = 400
+  end_if
+  if mt_ps = 0 then
+    mt_ps = 10
+  end_if
+  if mt_saNs = 0 then
+    mt_saNs = 10
+  end_if
+end
+def mv_SetVars {o: mv_vol, mv_NR}
+  ;
+  if dim = 2 then
+    mv_vol = mv_H * mv_W * 1.0
+  else
+    case_of mv_shape
+      case 0 :
+        mv_vol = mv_Wx * mv_Hp * mv_Wz
+      case 1 :
+        mv_vol = mv_Hc * pi * mv_Rc * mv_Rc
+      case 2 :
+        mv_vol = 4.0 * pi * mv_Rs * mv_Rs * mv_Rs / 3.0
+    end_case
+  end_if
+  ;
+  if dim = 2 then
+    _xlo = -0.5*mv_W
+    _xhi =  0.5*mv_W
+    _ylo = -0.5*mv_H
+    _yhi =  0.5*mv_H
+    command
+      range name mv_NR x=(@_xlo, @_xhi) y=(@_ylo, @_yhi)
+    end_command
+  else ; dim = 3
+    case_of mv_shape
+      case 0 :
+        _xlo = -0.5*mv_Wx
+        _xhi =  0.5*mv_Wx
+        _ylo = -0.5*mv_Hp
+        _yhi =  0.5*mv_Hp
+        _zlo = -0.5*mv_Wz
+        _zhi =  0.5*mv_Wz
+        command
+          range name mv_NR x=(@_xlo, @_xhi) &
+                           y=(@_ylo, @_yhi) &
+                           z=(@_zlo, @_zhi)
+        end_command
+      case 1 :
+        _ylo = -0.5*mv_Hc
+        _yhi =  0.5*mv_Hc
+        command
+          range name mv_NR cylinder end1=(0.0,@_ylo,0.0) &
+                                    end2=(0.0,@_yhi,0.0) &
+                                    rad =@mv_Rc
+        end_command
+      case 2 :
+        command
+          range name mv_NR sphere center=(0.0,0.0,0.0) &
+                                  rad   =@mv_Rs
+        end_command
+    end_case
+  end_if
+end
+; ------------------------------------
+def mg_check  ; Check that mg_parameters are consistent
+  _sum = 0.0
+  loop _i (1, mg_dsN)
+    _sum = _sum + mg_dsV(_i)
+  end_loop
+  if abs( _sum - 1.0 ) > 1e-6 then
+    error = 'mg_check: mg_dsV() does not sum to unity.'
+  end_if
+  loop _i (1, mg_dsN)
+    if mg_dsRrat(_i) < 1.0 then
+      error = 'mg_check: mg_dsRrat('+string(_i)+') is less than unity.'
+    end_if
+  end_loop
+  ;
+  ; Assure that mg_rfAlpha in [0.0, 1.0]
+  _bad = 0
+  if mg_rfAlpha > 1.0 then
+    _bad = 1
+  end_if
+  if mg_rfAlpha < 0.0 then
+    _bad = 1
+  end_if
+  if _bad = 1 then
+    error = 'mg_check: mg_rfAlpha is not in range [0.0, 1.0].'
+  end_if
+end
+; ===================================================================
+def avi_SetSize  ;{i: avi_S} PFC2D
+  _fval = @avi_S
+  _mfval = -_fval
+  command
+    plot set size @_mfval @_fval @_mfval @_fval
+  end_command
+end
+; ------------------------------------
+def avi_SetMag  ;{i: avi_Mag} PFC3D
+  avi_Mag = avi_Mag
+  command
+    plot set magnification @avi_Mag
+  end_command
+end
+; ------------------------------------
+def avi_OpenIt  ;{i: md_run_name, avi_Ns, avi_VID}
+  avi_Ns = avi_Ns
+  avi_VID = avi_VID
+  _fname = string(md_run_name) + '-1.avi'
+  _VID = avi_VID
+  command
+    movie avi_open file @_fname
+    movie step @avi_Ns @_VID file @_fname
+  end_command
+end
+; ------------------------------------
+def avi_CloseIt
+  _fname = string(md_run_name) + '-1.avi'
+  command
+    movie avi_close file @_fname
+  end_command
+end
+; ------------------------------------
+def mg_plots
+  if mv_per = 0 then
+    _str = 'Material vessel (walls) and material (balls, clumps & pbonds).'
+    if ev_mode # 0 then
+      command
+        evplot create view mg_vessel
+        evplot set job on
+        evplot set viewtitle text @_str on
+        evplot set orientation (20.0, 360.0, 180.0)
+        evplot add w_geom color yellow yellow
+        evplot add b_geom color yellow
+        evplot add cl_geom color cyan
+        evplot add pb_geom color blue
+      end_command
+    else  ; PFC3D
+      command
+        plot create mg_vessel
+        plot set title text @_str
+        plot add wall  orange
+        plot add ball  yellow
+        plot add clump cyan
+        plot add pbond black
+      end_command
+      if dim = 3 then
+        command
+          plot set rot 110 340 0
+        end_command
+      end_if
+    end_if
+  else
+    _str = 'Periodic material vessel and material (balls & pbonds).'
+    if ev_mode # 0 then
+      command
+        evplot create view mg_vessel
+        evplot set job on
+        evplot set viewtitle text @_str on
+        evplot add ut_mod_perSp color yellow red blue
+        evplot add pb_geom color blue
+      end_command
+    else  ; PFC3D
+      command
+        plot create mg_vessel
+        plot set title text @_str
+        plot add perspace black yellow blue red
+        plot add pbond black
+      end_command
+    end_if
+  end_if
+  ;
+  _str = 'Refinement regions (1,2,...) = (blue,green,red,magenta,...)'
+  if ev_mode # 0 then
+    command
+      evplot create view mg_refineRegions
+      evplot set job on
+      evplot set viewtitle text @_str on
+      evplot set orientation (20.0, 360.0, 180.0)
+      evplot add b_geom color yellow
+      evplot add cl_geom color cyan
+      evplot add ut_fish name mg_rf_pi &
+        color blue green red magenta
+        ; NOTE: Only existing colors can be modified for ut_fish.
+        ;       If colors are wrong, then call mg_plots again.
+    end_command
+  else  ; PFC3D
+    command
+      plot create mg_refineRegions
+      plot set title text @_str
+      plot add ball yellow
+      plot add clump cyan
+      plot add fish mg_rf_pi blue green red magenta &
+                             orange brown lgray dgray lblue lgreen &
+                             lcyan lred lmagenta white ; not yellow or cyan
+    end_command
+  end_if
+  _str = 'Material regions (1,2,...) = (blue,green,red,magenta,...)'
+  if ev_mode # 0 then
+    command
+      evplot create view mg_matRegions
+      evplot set job on
+      evplot set viewtitle text @_str on
+      evplot set orientation (20.0, 360.0, 180.0)
+      evplot add b_geom color yellow
+      evplot add cl_geom color cyan
+      evplot add ut_fish name mg_mp_pi &
+        color blue green red magenta
+        ; NOTE: Only existing colors can be modified for ut_fish.
+        ;       If colors are wrong, then call mg_plots again.
+    end_command
+  else  ; PFC3D
+    command
+      plot create mg_matRegions
+      plot set title text @_str
+      plot add ball yellow
+      plot add clump cyan
+      plot add fish mg_mp_pi blue green red magenta &
+                             orange brown lgray dgray lblue lgreen &
+                             lcyan lred lmagenta white ; not yellow or cyan
+    end_command
+  end_if
+  ;
+  if ev_mode # 0 then
+    command
+      evplot current view Base
+    end_command
+  else  ; PFC3D
+    command
+      plot cur mg_vessel
+    end_command
+  end_if
+end
+; ====================================
+def mg_Rx  ;{o: _clR}
+  _thetaX = urand * 2.0 * pi
+  _clR(1,1) = 1.0
+  _clR(1,2) = 0.0
+  _clR(1,3) = 0.0
+  _clR(2,1) = 0.0
+  _clR(2,2) =  cos( _thetaX )
+  _clR(2,3) =  sin( _thetaX )
+  _clR(3,1) = 0.0
+  _clR(3,2) = -sin( _thetaX )
+  _clR(3,3) =  cos( _thetaX )
+end
+; ------------------------------------
+def mg_Ry  ;{o: _clR}
+  _thetaY = urand * 2.0 * pi
+  _clR(1,1) =  cos( _thetaY )
+  _clR(1,2) = 0.0
+  _clR(1,3) =  sin( _thetaY )
+  _clR(2,1) = 0.0
+  _clR(2,2) = 1.0
+  _clR(2,3) = 0.0
+  _clR(3,1) = -sin( _thetaY )
+  _clR(3,2) = 0.0
+  _clR(3,3) =  cos( _thetaY )
+end
+; ------------------------------------
+def mg_Rz  ;{o: _clR}
+  _thetaZ = urand * 2.0 * pi
+  _clR(1,1) =  cos( _thetaZ )
+  _clR(1,2) =  sin( _thetaZ )
+  _clR(2,1) = -sin( _thetaZ )
+  _clR(2,2) =  cos( _thetaZ )
+  if dim = 3 then
+    _clR(1,3) = 0.0
+    _clR(2,3) = 0.0
+    _clR(3,3) = 1.0
+    _clR(3,1) = 0.0
+    _clR(3,2) = 0.0
+  end_if
+end
+; ====================================
+def _mp_idx  ;{i: _mp_ent}
+;
+; ----- Returns index of named range for given entity (ball or contact).
+;       If entity is not in any named range, then returns 1.
+;
+  loop _i (1, mg_mpN)
+    if inrange( mg_mpNR(_i), _mp_ent ) = 1 then
+      _mp_idx = _i
+      exit
+    end_if
+  end_loop
+  _mp_idx = 1
+end
+; ====================================
+def _rf_idx
+;
+; ----- Returns the index of named range for the ball given by [bp].
+;       If the ball is not in any named range, then returns 0.
+;
+  if mg_refine = 0 then
+    _rf_idx = 0
+    exit
+  end_if
+  ;
+  loop _i (1, mg_rfN)
+    if inrange( mg_rfNR(_i), bp ) = 1 then
+      _rf_idx = _i
+      exit
+    end_if
+  end_loop
+  _rf_idx = 0
+end
+; ------------------------------------
+def mg_rf_pi
+  plot_item
+  ;
+  bp = ball_head
+  loop while bp # null
+    _idx = _rf_idx
+    if _idx # 0 then
+       _md_pt1(1) = b_x(bp)
+       _md_pt1(2) = b_y(bp)
+       if dim = 3 then
+         _md_pt1(3) = b_z(bp)
+       end_if
+       _rad = 0.85 * b_rad(bp)
+       stat = set_color( _idx-1 )
+      oo = fill_circle( _md_pt1, _rad )
+    end_if
+    bp = b_next(bp)
+  end_loop
+end
+; ------------------------------------
+def rf_go
+  ;
+  ; Refine particle system using multiple passes through the llist
+  ; of balls.  During each pass, replace each ball that has mg_rfL() > 0
+  ; with two balls.  After each pass, decrement mg_rfL().
+  ;
+  loop while 1 # 0
+    _done = 1
+    bp = ball_head
+    loop while bp # null
+      bpnxt = b_next(bp)
+      _idx = _rf_idx
+      if _idx # 0 then
+        _level = mg_rfL( _idx )
+        if _level > 0 then
+          _done = 0
+          _rf_replace  ;{i: _level}
+        end_if
+      end_if
+      bp = bpnxt
+    end_loop
+    ;
+    if _done = 1 then
+      exit
+    else
+      loop _i (1, mg_rfN)
+        if mg_rfL(_i) # 0 then
+          mg_rfL(_i) = mg_rfL(_i) - 1
+        end_if
+      end_loop
+    end_if
+  end_loop
+end
+; ------------------------------------
+def _rf_replace ;{i: _level, mg_rfAlpha}
+;
+; ----- Replace ball [bp] with two balls that have total volume equal
+;       to that of bp.  The new balls are placed such that they just touch
+;       with no overlap and are randomly oriented and positioned such that
+;       their point of contact coincides with the centroid of bp.
+;       The radii of the two balls (_R1 and _R2) are chosen
+;       using the algorithm in the Augmented Fishtank volume of the
+;       version 4.0 manual.  The algorithm is controlled by the refinement
+;       parameter mg_rfAlpha [0.0,1.0].  When mg_rfAlpha=1.0, _R1 = _R2
+;       and the ball-size ratio (mg_Rrat) of the final material will be
+;       equal to that of the starting material; however, all children
+;       particles will be the same size, and this produces a crystalline
+;       packing.  When mg_rfAlpha < 1.0, _R1 will not equal _R2 and the
+;       ball-size ratio of the final material will be greater than that of
+;       the starting material; thus, we eliminate the crystalline packing
+;       at the expense of increasing the ball-size ratio.
+;
+  Array _rfPos(dim, 2)
+  ;
+  _R0 = b_rad(bp)
+  _s1 = _R0*( 1.0 + mg_Rrat^(dim/_level) )^(-1.0/dim)
+  _s2 = _R0*2.0^(-1.0/dim)
+  _R1 = _s1 + mg_rfAlpha*(_s2 - _s1)
+  _R2 = ( _R0^dim - _R1^dim )^(1.0/dim)
+  ;
+  ; -- Randomly orient the two-particle system.
+  loop _i (1, dim)
+    loop _j (1, 2)
+      _rfPos(_i, _j) = 0.0
+    end_loop
+  end_loop
+  _rfPos(1,1) = -_R1
+  _rfPos(1,2) =  _R2
+  if dim = 3 then
+    mg_Rx      ;{o: _clR}
+    _rfRotate  ;{i: _clR; o: _rfPos}
+    mg_Ry      ;{o: _clR}
+    _rfRotate  ;{i: _clR; o: _rfPos}
+  end_if
+  mg_Rz        ;{o: _clR}
+  _rfRotate  ;{i: _clR; o: _rfPos}
+  ;
+  ; -- Position the system by moving its centroid (at origin) to orig. ball.
+  Array _rfx(dim)
+  _rfx(1) = b_x(bp)
+  _rfx(2) = b_y(bp)
+  if dim = 3 then
+    _rfx(3) = b_z(bp)
+  end_if
+  loop _n (1, 2)
+    loop _i (1, dim)
+      _rfPos(_i,_n) = _rfx(_i) + _rfPos(_i,_n)
+    end_loop
+  end_loop
+  ;
+  ; -- Delete original ball, create the two new balls.
+  ii = b_delete(bp)
+  _x1 = _rfPos(1,1)
+  _y1 = _rfPos(2,1)
+  _x2 = _rfPos(1,2)
+  _y2 = _rfPos(2,2)
+  if dim = 2 then
+    command
+      ball rad=@_R1 x=@_x1 y=@_y1
+      ball rad=@_R2 x=@_x2 y=@_y2
+    end_command
+  else
+    _z1 = _rfPos(3,1)
+    _z2 = _rfPos(3,2)
+    command
+      ball rad=@_R1 x=@_x1 y=@_y1 z=@_z1
+      ball rad=@_R2 x=@_x2 y=@_y2 z=@_z2
+    end_command
+  end_if
+end
+; ------------------------------------
+def _rfRotate  ;{i: _clR; o: _rfPos}
+  Array _rfv1(dim)
+  ;
+  loop _n (1, 2)
+    loop _i (1, dim)
+      _rfv1(_i) = 0.0
+      loop _j (1, dim)
+        _rfv1(_i) = _rfv1(_i) + _clR(_i,_j)*_rfPos(_j,_n)
+      end_loop
+    end_loop
+    loop _i (1, dim)
+      _rfPos(_i,_n) = _rfv1(_i)
+    end_loop
+  end_loop
+end
+; ------------------------------------
+def mg_mp_pi
+  plot_item
+  ;
+  if mg_mp_pi_bond = 1 then  ; only show bonds (pbonds and cbonds)
+    cp = contact_head
+    loop while cp # null
+      _bond = 0
+      if md_cbond = 1 then
+        _bond = 1
+      end_if
+      if md_pbond = 1 then
+        _bond = 1
+      end_if
+      if _bond = 1 then
+        _mp_ent = cp
+        _idx = _mp_idx
+        _md_pt1(1) = c_x(cp)
+        _md_pt1(2) = c_y(cp)
+        if dim = 3 then
+          _md_pt1(3) = c_z(cp)
+        end_if
+        _rad = 0.50 * b_rad( c_ball1(cp) )
+        stat = set_color( _idx-1 )
+        oo = fill_circle( _md_pt1, _rad )
+      end_if
+      cp = c_next(cp)
+    end_loop
+  else                        ; only show particles
+    bp = ball_head
+    loop while bp # null
+      _mp_ent = bp
+      _idx = _mp_idx
+      _md_pt1(1) = b_x(bp)
+      _md_pt1(2) = b_y(bp)
+      if dim = 3 then
+        _md_pt1(3) = b_z(bp)
+      end_if
+      _rad = 0.50 * b_rad(bp)
+      stat = set_color( _idx-1 )
+      oo = fill_circle( _md_pt1, _rad )
+      bp = b_next(bp)
+    end_loop
+  end_if
+end
+; ===================================================================
+def mg_isopack
+;
+; ----- Achieve an initial isotropic packing of frictionless assembly.
+;       Activate density scaling.
+;       Perform first 150 cycles in increments of 2 cycles with freezes
+;       in between, then use [md_eq] to reach controlled static equil.
+;
+;   1)  All walls are frictionless with normal stiffness set equal to
+;         specified fraction of average ball normal stiffness and zero
+;         shear stiffness.
+;   2)  Set ball normal and shear stiffnesses.
+;         Ball friction coefficients and any inter-particle bonds must be
+;         installed subsequently.
+;   3)  Initial stresses in the sample are not specified, as they will
+;         be modified subsequently.
+;
+; INPUT: ba_dens  - density of all balls in assembly
+;        ba_Ec    - Young's modulus at each particle-particle contact
+;        ba_krat  - ratio of particle normal to shear stiffness (kn/ks)
+;        mg_wfac  - normal stiffness factor for all walls, specified
+;                        relative to average particle-particle modulus
+;        mg_iso_rat   - equilibrium ratio limit (max, SOLVE RATIO)
+;        mg_iso_steps - step limit during SOLVE RATIO
+
+;     2D ONLY:
+;        tm_open   - see [tm_assemble_genballs]
+;
+  if mg_iso_rat = 0 then
+    mg_iso_rat = 0.03
+  end_if
+  if mg_iso_steps = 0 then
+    _mg_iso_steps
+  end_if
+  md_eq_rat = mg_iso_rat
+  md_eq_steps = mg_iso_steps
+  md_eq_int = mg_iso_steps
+  ;
+  command
+    set dt dscale  ; activate differential density scaling
+  end_command
+  ;
+  mg_isopack0
+  if mg_refine # 0 then
+    rf_go
+  end_if
+  md_DelOut
+  if mg_shape # 0 then
+    oo = mg_ClumpReplace  ; function to be provided by user
+  end_if
+  if _mg_iso_auto = 1 then
+    _mg_iso_steps
+  end_if
+  md_eq_steps = mg_iso_steps
+  md_eq_int = mg_iso_steps
+  mg_isopack0
+  mg_isopack1
+end
+; ------------------------------------
+def _mg_iso_steps  ;{i: md_numballs; o: mg_iso_steps}
+  _mg_iso_auto = 1
+  if md_numballs < 25000 then
+    mg_iso_steps = 7500
+  else
+    if md_numballs < 50000 then
+      mg_iso_steps = 15000
+    else
+      if md_numballs < 100000 then
+        mg_iso_steps = 30000
+      else
+        mg_iso_steps = 60000
+      end_if
+    end_if
+  end_if
+end
+; ------------------------------------
+def mg_isopack0
+  md_DelOut
+  command
+    prop fric=0.0
+  end_command
+  md_balldens
+  md_balldeform
+  mg_wallkn
+  oo = mv_modify2
+  command
+    cycle 150 calm 2
+  end_command
+  _mg_iso_eq
+end
+; ------------------------------------
+def mg_isopack1
+  loop _iter (1, 2)  ; Set final props for all regions
+    md_DelOut        ; Do it twice to insure that particles are in
+    command          ; their near-final locations.
+      prop fric=0.0
+    end_command
+    md_balldens
+    md_balldeform
+    mg_wallkn
+    _mg_iso_eq
+  end_loop
+end
+; ------------------------------------
+def _mg_iso_eq
+  md_eq  ;{o: md_eq_stat}
+  if md_eq_stat = 1 then
+    _str = 'mg_isopack: Did not reach equilibrium, '
+    _str = _str + 'increase mg_iso_steps and rerun.'
+    error = _str
+  end_if
+end
+; ------------------------------------
+def md_zerovel
+;
+  bp = ball_head
+  loop while bp # null
+    if b_clump(bp) = null then
+      md_bpVel0
+    end_if
+    bp = b_next(bp)
+  end_loop
+  clp = clump_head
+  loop while clp # null
+    md_clpVel0
+    clp = cl_next(clp)
+  end_loop
+end
+; ------------------------------------
+def md_DelOut
+;
+; ----- Delete all particles outside of material vessel.
+;
+  if mv_per # 0 then
+    exit
+  end_if
+  bp = ball_head
+  loop while bp # null
+    bpnext = b_next(bp)
+    if inrange( 'mv_NR', bp ) = 0 then
+      oo = b_delete(bp)
+    end_if
+    bp = bpnext
+  end_loop
+end
+; ====================================
+def tt_grips
+;
+; ----- Identify grip grains (balls and clumps) for direct-tension test.
+;
+; INPUT:  mt_tt - grip thickness
+; OUTPUT: md_extra_{balls, clumps} - number of extra slots for balls, clumps
+;         {b,cl}_extra({bp,clp},1) - 0,  not a grip particle
+;                                    1,    top grip particle
+;                                    2, bottom grip particle
+;
+  if dim = 2 then
+    _ht = mv_H
+  else ; dim = 3
+    case_of mv_shape
+      ; default
+        error = 'tt_grips: mv_shape # {0,1}.'
+      case 0 :
+        _ht = mv_Hp
+      case 1 :
+        _ht = mv_Hc
+    end_case
+  end_if
+  _topY1 =  0.5*_ht
+  _topY0 =  0.5*_ht - mt_tt
+  _botY1 = -0.5*_ht + mt_tt
+  _botY0 = -0.5*_ht
+  command
+    SET EXTRA ball  1
+    SET EXTRA clump 1
+    range name tt_NRgriptop y=(@_topY0, @_topY1)
+    range name tt_NRgripbot y=(@_botY0, @_botY1)
+  end_command
+  md_extra_balls  = 1
+  md_extra_clumps = 1
+  ;
+  bp = ball_head
+  loop while bp # null
+    b_extra(bp,1) = 0
+    if b_clump(bp) = null then
+      if inrange( 'tt_NRgriptop', bp ) = 1 then
+        b_extra(bp,1) = 1
+      end_if
+      if inrange( 'tt_NRgripbot', bp ) = 1 then
+        b_extra(bp,1) = 2
+      end_if
+    end_if
+    bp = b_next(bp)
+  end_loop
+  ;
+  clp = clump_head
+  loop while clp # null
+    cl_extra(clp,1) = 0
+    if inrange( 'tt_NRgriptop', clp ) = 1 then
+      cl_extra(clp,1) = 1
+    end_if
+    if inrange( 'tt_NRgripbot', clp ) = 1 then
+      cl_extra(clp,1) = 2
+    end_if
+    clp = cl_next(clp)
+  end_loop
+end
+; ------------------------------------
+def md_bpVel0
+  b_xvel(bp) = 0.0
+  b_yvel(bp) = 0.0
+  if dim = 2 then
+    b_rvel(bp) = 0.0
+  else
+    b_zvel(bp) = 0.0
+    b_rxvel(bp) = 0.0
+    b_ryvel(bp) = 0.0
+    b_rzvel(bp) = 0.0
+  end_if
+end
+def md_clpVel0
+  cl_xvel(clp) = 0.0
+  cl_yvel(clp) = 0.0
+  if dim = 2 then
+    cl_rvel(clp) = 0.0
+  else
+    cl_zvel(clp) = 0.0
+    cl_rxvel(clp) = 0.0
+    cl_ryvel(clp) = 0.0
+    cl_rzvel(clp) = 0.0
+  end_if
+end
+def md_bpFix0
+  b_xfix(bp) = 1
+  b_yfix(bp) = 1
+  if dim = 2 then
+    b_rfix(bp) = 1
+  else
+    b_zfix(bp) = 1
+    b_rxfix(bp) = 1
+    b_ryfix(bp) = 1
+    b_rzfix(bp) = 1
+  end_if
+end
+def md_clpFix0
+  cl_xfix(clp) = 1
+  cl_yfix(clp) = 1
+  if dim = 2 then
+    cl_rfix(clp) = 1
+  else
+    cl_zfix(clp) = 1
+    cl_rxfix(clp) = 1
+    cl_ryfix(clp) = 1
+    cl_rzfix(clp) = 1
+  end_if
+end
+; ====================================
+def tt_grip_cond
+;
+  bp = ball_head
+  loop while bp # null
+    if b_extra(bp,1) # 0 then
+      md_bpVel0
+      md_bpFix0
+    end_if
+    bp = b_next(bp)
+  end_loop
+  clp = clump_head
+  loop while clp # null
+    if cl_extra(clp,1) # 0 then
+      md_clpVel0
+      md_clpFix0
+    end_if
+    clp = cl_next(clp)
+  end_loop
+end
+; ====================================
+def tt_syy
+;
+  _sumTop = 0.0
+  _sumBot = 0.0
+  ;
+  bp = ball_head
+  loop while bp # null
+    if b_extra(bp,1) = 1 then
+      _sumTop = _sumTop + b_yfob(bp)
+    end_if
+    if b_extra(bp,1) = 2 then
+      _sumBot = _sumBot + b_yfob(bp)
+    end_if
+    bp = b_next(bp)
+  end_loop
+  clp = clump_head
+  loop while clp # null
+    if cl_extra(clp,1) = 1 then
+      _sumTop = _sumTop + cl_yfob(clp)
+    end_if
+    if cl_extra(clp,1) = 2 then
+      _sumBot = _sumBot + cl_yfob(clp)
+    end_if
+    clp = cl_next(clp)
+  end_loop
+  ;
+  if dim = 2 then
+    _area = mv_W * 1.0
+  else ; dim = 3
+    case_of mv_shape
+      ; default
+        error = 'tt_syy: mv_shape # {0,1}.'
+      case 0 :
+        _area = mv_Wx * mv_Wz
+      case 1 :
+        _area = pi * mv_Rc * mv_Rc
+    end_case
+  end_if
+  _tt_syy = 0.5*(-_sumTop + _sumBot) / _area
+  tt_syy_max = max( tt_syy_max, abs(_tt_syy) )
+  tt_syy = _tt_syy
+end
+; ====================================
+def mt_accel_platens
+;
+; ----- Accelerate the platens in controlled fashion to achieve
+;       final velocity of [p_vel] over approximately [mt_pn] cycles
+;       in [mt_ps] stages.
+;
+; INPUT:  p_vel   - final platen velocity    (float)
+;         mt_pm   - platen-motion flag (boolean) 0- both or 1- only +x/top
+;         mt_pn   - total number of cycles   (integer)
+;         mt_ps   - number of intervals      (integer)
+;         p_close - (boolean) 1- close or 0- open platens
+;         p_islat - (boolean) platens are: 1- lateral x-walls,
+;                                          0- top/bot. walls
+;
+; --- Set _wid{A,B}
+  if dim = 2 then
+    if p_islat # 0 then
+      _widA = 3
+      _widB = 4
+    else  ; p_islat = 0
+      _widA = 1
+      _widB = 2
+    end_if
+  else  ; dim = 3
+    if p_islat # 0 then
+      _widA = 2
+      _widB = 1
+    else  ; p_islat = 0
+      _widA = 4
+      _widB = 3
+    end_if
+  end_if
+  ;
+  _delvel = p_vel / mt_ps
+  _niter = mt_pn / mt_ps
+  _vel = 0.0
+  ;
+  loop ap_ii (1, mt_ps)
+    _vel = _vel + _delvel
+    if p_close = 1 then
+      _fvel = _vel
+    else
+      _fvel = -_vel
+    end_if
+    _mfvel = -_fvel
+    ;
+    if p_islat # 0 then
+      if mt_pm # 0 then
+        command
+          wall id=@_widA xvel=0.0
+        end_command
+      else
+        command
+          wall id=@_widA xvel=@_fvel
+        end_command
+      end_if
+
+      command
+        wall id=@_widB xvel=@_mfvel
+        cycle @_niter
+      end_command
+    else
+      if mt_pm # 0 then
+        command
+          wall id=@_widA yvel=0.0
+        end_command
+      else
+        command
+          wall id=@_widA yvel=@_fvel
+        end_command
+      end_if
+      command
+        wall id=@_widB yvel=@_mfvel
+        cycle @_niter
+      end_command
+    end_if
+  end_loop
+end
+; ====================================
+def _mt_done  ;{i: mt_code}
+  _mt_done = 0
+  case_of mt_code
+    ; default case here
+      error = 'mt_code out of range in mt_runtest.'
+    case 0 :  ; compression test, peak-force controlled
+      if dim = 3 then
+        if abs(et3_wsd) < (mt_alpha * et3_wsd_max) then
+          _mt_done = 1
+        end_if
+      else
+        if abs(et2_wsd) < (mt_alpha * et2_wsd_max) then
+          _mt_done = 1
+        end_if
+      end_if
+    case 1 :  ; Brazilian test
+      if dim = 3 then
+        if abs(et3_wfxx) < (mt_alpha * et3_wfxx_max) then
+          _mt_done = 1
+        end_if
+      else
+        if abs(et2_wfxx) < (mt_alpha * et2_wfxx_max) then
+          _mt_done = 1
+        end_if
+      end_if
+    case 2 :  ; direct-tension test
+      if abs(tt_syy) < (mt_alpha * tt_syy_max) then
+        _mt_done = 1
+      end_if
+    case 3 : compression test, max-strain controlled
+      if dim = 3 then
+        if et3_weyy < mt_alpha then
+          _mt_done = 1
+        end_if
+      else
+        if et2_weyy < mt_alpha then
+          _mt_done = 1
+        end_if
+      end_if
+  end_case
+end
+; ====================================
+def _mt_sac
+;
+; ----- Perform one stage of the internal-based strain application scheme.
+;
+  _mt_stg = _mt_stg + 1
+  md_ts = mt_saNs * tdel
+  _mt_srate = mt_saDel / md_ts
+  bp = ball_head
+  loop while bp # null
+    b_yfix(bp) = 1
+    b_yvel(bp) = _mt_srate * b_y(bp)
+    bp = b_next(bp)
+  end_loop
+  if dim = 2 then
+    _w1yvel = _mt_srate * (w1_0 + w_y(wadd1))
+    _w2yvel = _mt_srate * (w2_0 + w_y(wadd2))
+    command
+      wall id=1 yvel=@_w1yvel
+      wall id=2 yvel=@_w2yvel
+    end_command
+  else ; dim = 3
+    _w4yvel = _mt_srate * (wy2 + w_y(wpy2))
+    _w3yvel = _mt_srate * (wy1 + w_y(wpy1))
+    command
+      wall id=4 yvel=@_w4yvel
+      wall id=3 yvel=@_w3yvel
+    end_command
+  end_if
+  ;
+  md_ts_go
+  ;
+  bp = ball_head
+  loop while bp # null
+    b_yfix(bp) = 0
+    b_yvel(bp) = 0.0
+    bp = b_next(bp)
+  end_loop
+  if dim = 2 then
+    command
+      wall id=1 yvel=0.0
+      wall id=2 yvel=0.0
+    end_command
+  else ; dim = 3
+    command
+      wall id=4 yvel=0.0
+      wall id=3 yvel=0.0
+    end_command
+  end_if
+  ;
+  md_eq_rat = mt_eq_lim
+  md_eq_steps = mt_eq_Ns
+  md_eq
+  if md_eq_stat # 0 then
+    error = '_mt_sac: Did not obtain equilibrium after applied axial strain.'
+  end_if
+end
+; ====================================
+def _mt_pvel
+  if dim = 2 then
+    if p_islat # 0 then
+      _L0 = mv_W
+    else
+      _L0 = mv_H
+    end_if
+  else
+    if p_islat # 0 then
+      _L0 = mv_Wx
+    else
+      case_of mv_shape
+        case 0 :
+          _L0 = mv_Hp
+        case 1 :
+          _L0 = mv_Hc
+        case 2 :
+          _L0 = 2.0 * mv_Rs
+      end_case
+    end_if
+  end_if
+  ;
+  _pvel = 0.5 * mt_psr * _L0
+  if mt_pm # 0 then  ; only moving one surface
+    _pvel = _pvel * 2.0
+  end_if
+  _mt_pvel = _pvel
+end
+; ====================================
+def mt_runtest
+;
+; ----- Execute the {triax, biax, Brazilian, direct-tension} tests.
+;
+; INPUT: mt_code  - criterion code {0,1,2,3}
+;        mt_alpha - criterion value
+;        mt_sac   - strain-application code {0,1} = {platen-, internal-}based
+;        if mt_sac # 0 then must provide
+;          mt_saNs  - approx. steps per stage
+;          mt_saDel - axial-strain per stage
+;          {mt_eq_lim, mt_eq_Ns}
+;        if mt_sac = 0 then must provide
+;          parameters in [mt_accel_platens]
+;
+; OUTPUT: p_vel - final platen velocity (float)
+;
+  if mt_alpha = 0 then  ; default
+    if mt_code = 3 then
+      mt_alpha = -0.01
+    else
+      mt_alpha = 0.8
+    end_if
+  end_if
+  ;
+  p_vel = _mt_pvel
+  if mt_sac = 0 then
+    if mt_code = 2 then
+      tt_accel_platens
+    else
+      mt_accel_platens
+    end_if
+  end_if
+  ;
+  loop while 1 # 0  ; infinite loop
+    if mt_sac = 0 then
+      command
+        cycle 100
+      end_command
+    else
+      _mt_sac
+    end_if
+    if _mt_done # 0 then
+      exit
+    end_if
+  end_loop
+end
+; ===================================================================
+def tt_accel_platens
+;
+; ----- Accelerate the platens in controlled fashion to achieve
+;       final velocity of [p_vel] over approximately [mt_pn] cycles
+;       in [mt_ps] stages.
+;
+; INPUT:  p_vel   - final platen velocity    (float)
+;         mt_pm   - platen-motion flag (boolean) 0- both or 1- only top
+;         mt_pn   - total number of cycles   (integer)
+;         mt_ps   - number of intervals      (integer)
+;         p_close - (boolean) 1- close or 0- open platens
+;
+  _delvel = p_vel / mt_ps
+  _niter = mt_pn / mt_ps
+  _vel = 0.0
+  loop ap_ii (1,mt_ps)
+    _vel = _vel + _delvel
+    if p_close = 1 then
+      _fvel = _vel
+    else
+      _fvel = -_vel
+    end_if
+    ;
+    bp = ball_head
+    loop while bp # null
+      if b_extra(bp,1) = 1 then
+        b_yvel(bp) = -_fvel
+      end_if
+      if b_extra(bp,1) = 2 then
+        if mt_pm # 0 then
+          b_yvel(bp) = 0.0
+        else
+          b_yvel(bp) = _fvel
+        end_if
+      end_if
+      bp = b_next(bp)
+    end_loop
+    clp = clump_head
+    loop while clp # null
+      if cl_extra(clp,1) = 1 then
+        cl_yvel(clp) = -_fvel
+      end_if
+      if cl_extra(clp,1) = 2 then
+        if mt_pm # 0 then
+          cl_yvel(clp) = 0.0
+        else
+          cl_yvel(clp) = _fvel
+        end_if
+      end_if
+      clp = cl_next(clp)
+    end_loop
+    ;
+    command
+      cycle @_niter
+    end_command
+  end_loop
+end
+; ===================================================================
+def tt_pi_grips  ; Display the grip grains (balls and clumps)
+  plot_item
+  ;
+  if md_extra_balls < 1 then
+    exit
+  end_if
+  if md_extra_clumps < 1 then
+    exit
+  end_if
+  ;
+  stat= set_color( 0 )  ; color for single balls
+  bp = ball_head
+  loop while bp # null
+    _drawit = 0
+    if b_extra(bp,1) = 1 then
+      _drawit = 1
+    end_if
+    if b_extra(bp,1) = 2 then
+      _drawit = 1
+    end_if
+    if _drawit = 1 then
+      _md_pt1(1) = b_x(bp)
+      _md_pt1(2) = b_y(bp)
+      _rad = 0.85 * b_rad(bp)
+      if dim = 3 then
+        _md_pt1(3) = b_z(bp)
+      end_if
+      stat = fill_circle( _md_pt1, _rad )
+    end_if
+    bp = b_next(bp)
+  end_loop
+  ;
+  stat= set_color( 1 )  ; color for clumps
+  clp = clump_head
+  loop while clp # null
+    _drawit = 0
+    if cl_extra(clp,1) = 1 then
+      _drawit = 1
+    end_if
+    if cl_extra(clp,1) = 2 then
+      _drawit = 1
+    end_if
+    if _drawit = 1 then
+      bp0 = cl_list(clp)
+      loop while bp0 # null
+        _md_pt1(1) = b_x(bp0)
+        _md_pt1(2) = b_y(bp0)
+        _rad = 0.85 * b_rad(bp0)
+        if dim = 3 then
+          _md_pt1(3) = b_z(bp0)
+        end_if
+        stat = fill_circle( _md_pt1, _rad )
+        bp0 = b_cllist(bp0)
+      end_loop
+    end_if
+    clp = cl_next(clp)
+  end_loop
+end
+;======================================================================
+; Implementation of a general LIFO stack
+;
+; ================================
+def md_stk_clear
+  loop _idx (1, _md_stk_size)
+    _md_stk( _idx ) = 0
+  end_loop
+end
+; ===================================================================
+def md_stk_init
+  _md_stk_idx = 0
+end
+; ================================
+def md_stk_pop
+  if _md_stk_idx = 0 then
+    md_stk_pop = null
+    exit
+  end_if
+  ;
+  md_stk_pop = _md_stk(_md_stk_idx)
+  _md_stk_idx = _md_stk_idx - 1
+end
+; ================================
+def md_stk_push
+;
+; INPUT: md_stk_item
+;
+  if _md_stk_idx = _md_stk_size then
+    ii = out('Overflow of [_md_stk].  Increase size of [_md_stk_size].')
+    exit
+  end_if
+  ;
+  _md_stk_idx = _md_stk_idx + 1
+  _md_stk(_md_stk_idx) = md_stk_item
+end
+; ===================================================================
+def md_scale_strengths
+;
+; ----- Multiply strengths (both shear and normal) of designated bonds
+;       by [md_scale_fac].
+;
+; INPUT: md_scale_fac
+;        md_bondtype - bond-type indicator
+;                      (0-all bonds,
+;                       1-contact bonds only,
+;                       2-parallel bonds only,
+;                       3-sj bonds only)
+;
+  _cbonds = 1
+  _pbonds = 1
+  _sjbonds = 1
+  if md_bondtype = 1 then
+    _cbonds  = 1
+    _pbonds  = 0
+    _sjbonds = 0
+  end_if
+  if md_bondtype = 2 then
+    _cbonds  = 0
+    _pbonds  = 1
+    _sjbonds = 0
+  end_if
+  if md_bondtype = 3 then
+    _cbonds  = 0
+    _pbonds  = 0
+    _sjbonds = 1
+  end_if
+  cp = contact_head
+  loop while cp # null
+    if _cbonds = 1 then
+      if md_cbond = 1 then
+        c_nstrength(cp) = c_nstrength(cp) * md_scale_fac
+        c_sstrength(cp) = c_sstrength(cp) * md_scale_fac
+      end_if
+    end_if
+    if _pbonds = 1 then
+      if md_pbond = 1 then
+        pb_nstrength(cp) = pb_nstrength(cp) * md_scale_fac
+        pb_sstrength(cp) = pb_sstrength(cp) * md_scale_fac
+      end_if
+    end_if
+    if _sjbonds = 1 then
+      if _sj_present = 1 then
+        if c_prop(cp, 'sj_bmode') = 3 then
+          c_prop(cp, 'sj_bns')  = c_prop(cp, 'sj_bns')  * md_scale_fac
+          c_prop(cp, 'sj_bcoh') = c_prop(cp, 'sj_bcoh') * md_scale_fac
+        end_if
+      end_if
+    end_if
+    cp = c_next(cp)
+  end_loop
+end
+;======================================================================
+def md_strength_info
+;
+; --- Strength information for current model.  All strengths are expressed
+;     in units of stress.
+;
+; INPUT: md_clusters - boolean: if=1, clusters exist
+;                                     must specify following variable:
+;        cl_bslt - slot in b_extra( bp, [cl_bslt] ) where cluster-info is
+;
+; OUTPUT: md_strength(4,6) - see [md_arrays]
+;
+  loop _i (1,4)
+    md_strength( _i, 1 ) = 1e30
+    md_strength( _i, 2 ) = 0.0
+    md_strength( _i, 3 ) = 0.0
+    md_strength( _i, 4 ) = 1e30
+    md_strength( _i, 5 ) = 0.0
+    md_strength( _i, 6 ) = 0.0
+    md_cnt( _i ) = 0
+  end_loop
+  ;
+  cp = contact_head
+  loop while cp # null
+    if md_cbond = 1 then  ; contact bond present
+      _idx = 1
+      if _md_usebtn_cp = 1 then
+        _idx = 3
+      end_if
+      md_cnt(_idx) = md_cnt(_idx) + 1
+       _nstr = c_nstrength(cp) / md_scalefac_cp
+       _sstr = c_sstrength(cp) / md_scalefac_cp
+      md_strength(_idx,2) = md_strength(_idx,2) + _nstr
+      md_strength(_idx,5) = md_strength(_idx,5) + _sstr
+      md_strength(_idx,1) = min( md_strength(_idx,1), _nstr )
+      md_strength(_idx,3) = max( md_strength(_idx,3), _nstr )
+      md_strength(_idx,4) = min( md_strength(_idx,4), _sstr )
+      md_strength(_idx,6) = max( md_strength(_idx,6), _sstr )
+    end_if
+    ;
+    if md_pbond = 1 then  ; parallel bond present
+      pbp = c_pb(cp)
+      _idx = 2
+      if _md_usebtn_cp = 1 then
+        _idx = 4
+      end_if
+      md_cnt(_idx) = md_cnt(_idx) + 1
+       _nstr = pb_nstrength(cp)
+       _sstr = pb_sstrength(cp)
+      md_strength(_idx,2) = md_strength(_idx,2) + _nstr
+      md_strength(_idx,5) = md_strength(_idx,5) + _sstr
+      md_strength(_idx,1) = min( md_strength(_idx,1), _nstr )
+      md_strength(_idx,3) = max( md_strength(_idx,3), _nstr )
+      md_strength(_idx,4) = min( md_strength(_idx,4), _sstr )
+      md_strength(_idx,6) = max( md_strength(_idx,6), _sstr )
+    end_if
+    cp = c_next(cp)
+  end_loop
+  loop _i (1,4)
+    if md_cnt( _i ) # 0 then
+      md_strength( _i, 2 ) = md_strength( _i, 2 ) / md_cnt( _i )
+      md_strength( _i, 5 ) = md_strength( _i, 5 ) / md_cnt( _i )
+    end_if
+  end_loop
+end
+;======================================================================
+def md_strength_histogram
+;
+; ----- Creates a histogram for both normal and shear bond
+;       strengths (stress units).
+;
+; INPUT: md_bondtype - bond-type indicator (default: 1)
+;                      (1-contact bonds, 2-parallel bonds)
+;        md_clusters - boolean: if=1, clusters exist
+;                                     must specify following two variables:
+;          cl_bslt - slot in b_extra( bp, [cl_bslt] ) where cluster-info is
+;          md_btn  - generate histogram for inter-cluster values
+;                    (between clusters)
+;        md_slots    - number of histogram intervals (default: 25)
+; IN/OUT:
+;         md_ntab - table number for normal strength histogram
+;         md_stab - table number for shear strength histogram
+;
+; NOTES: The tables can be plotted via:  "plot table @md_ntab both"
+;
+; ----- Defaults ---------
+  if md_bondtype = 0 then
+    md_bondtype = 1
+  end_if
+  if md_slots = 0 then
+    md_slots = 25
+  end_if
+  if md_stab = 0 then
+    md_stab = 111
+  end_if
+  if md_ntab = 0 then
+    md_ntab = 222
+  end_if
+  ;
+  command
+    table @md_ntab erase
+    table @md_ntab name='normal-stress'
+    table @md_stab erase
+    table @md_stab name='shear-stress'
+  end_command
+  if md_btn = 1 then
+    command
+      table @md_ntab name='normal-stress (btn.)'
+      table @md_stab name='shear-stress (btn.)'
+    end_command
+  end_if
+  ;
+  loop _i(1,md_slots)
+    ytable(md_ntab,_i) = 0.0
+    ytable(md_stab,_i) = 0.0
+  end_loop
+;
+  md_strength_info  ; {o: md_strength(*,*)}
+  _del_ns = (md_max_ns - md_min_ns)/md_slots
+  _del_ss = (md_max_ss - md_min_ss)/md_slots
+
+;  ----- go through each slot -------
+  loop _slt(1, md_slots)
+    _ns_i  = md_min_ns + (_slt-1)*_del_ns
+    _ns_i1 = _ns_i + _del_ns
+    _ntab_x = (_ns_i+_ns_i1)/2.0
+
+    _ss_i  = md_min_ss + (_slt-1)*_del_ss
+    _ss_i1 = _ss_i + _del_ss
+    _stab_x = (_ss_i + _ss_i1)/2.0
+    ;
+    cp = contact_head
+    loop while cp # null
+      _fnd = 0
+      if md_bondtype = 1 then
+        if md_cbond = 1 then  ; contact bond present
+          _fnd = 1
+          _ncb = c_nstrength(cp) / md_scalefac_cp
+          _scb = c_sstrength(cp) / md_scalefac_cp
+        end_if
+      end_if
+      if md_bondtype = 2 then
+        if md_pbond = 1 then  ; parallel bond present
+          pbp = c_pb(cp)
+          _fnd = 1
+          _ncb = pb_nstrength(pbp)
+          _scb = pb_sstrength(pbp)
+        end_if
+      end_if
+      ;
+      if md_btn = 1 then
+        if cl_internal_cp = 1 then
+          _fnd = 0  ; ignore this contact, it is internal and we want btn.
+        end_if
+      end_if
+      ;
+      if _fnd = 1 then
+        if _ncb >= _ns_i then
+          if _ncb < _ns_i1 then
+            ytable(md_ntab, _slt) = ytable(md_ntab, _slt) + 1.0
+          end_if
+        end_if
+        if _scb >= _ss_i then
+          if _scb < _ss_i1 then
+            ytable(md_stab, _slt) = ytable(md_stab, _slt) + 1.0
+          end_if
+        end_if
+      end_if ; _fnd=1
+      cp = c_next(cp)
+    end_loop ; contact loop
+    xtable(md_ntab, _slt) = _ntab_x
+    xtable(md_stab, _slt) = _stab_x
+  end_loop
+end
+;======================================================================
+def md_SizeDistribution
+;
+; ----- Create the following tables (numbered md_t{1,2,3}):
+;         (1) histogram of particle diameters
+;         (2) cumulative volume percent passing versus particle diameter
+;         (3) volume retained versus particle diameter.
+;
+; INPUT: md_t{1,2,3}, md_slots
+;
+  if md_slots = 0 then
+    md_slots = 20
+  end_if
+  if md_t1 = 0 then
+    md_t1 = 1001
+  end_if
+  if md_t2 = 0 then
+    md_t2 = 1002
+  end_if
+  if md_t3 = 0 then
+    md_t3 = 1003
+  end_if
+  ;
+  command
+    table @md_t1 erase
+    table @md_t1 name='HistPartDiam'
+    table @md_t2 erase
+    table @md_t2 name='CumVolPctPass'
+    table @md_t3 erase
+    table @md_t3 name='VolRetained'
+  end_command
+  ;
+  md_radii ;{o: md_rmin, md_rmax}
+  _dmin = 2.0*md_rmin
+  _dmax = 2.0*md_rmax
+  _delta = (_dmax - _dmin) / md_slots
+  if abs(_delta) < 1e-6 then ; All particles same size,
+    _dmin = 0.999 * _dmin    ; expand diam-range by 0.1%
+    _dmax = 1.001 * _dmax
+    _delta = (_dmax - _dmin) / md_slots
+  end_if
+  _x = _dmin + 0.5*_delta
+  loop _slt (1, md_slots)
+    xtable( md_t1, _slt ) = _x
+    xtable( md_t2, _slt ) = _x
+    xtable( md_t3, _slt ) = _x
+    _x = _x + _delta
+  end_loop
+  ;
+  ; --- Fill tables md_t1 and md_t3.
+  _sumVol = 0.0
+  _numBall = 0
+  bp = ball_head
+  loop while bp # null
+    _numBall = _numBall + 1
+    if dim = 2 then
+      _vol = pi*b_rad(bp)^2
+    else
+      _vol = (4.0/3.0)*pi*b_rad(bp)^3
+    end_if
+    _sumVol = _sumVol + _vol
+    _d = 2.0*b_rad(bp)
+    _slt = int( (_d - _dmin) / _delta ) + 1
+    if _slt > md_slots then
+      _slt = md_slots
+    end_if
+    ytable(md_t1, _slt) = ytable(md_t1, _slt) + 1
+    ytable(md_t3, _slt) = ytable(md_t3, _slt) + _vol
+    bp = b_next(bp)
+  end_loop
+  _num = 0
+  _sum = 0.0
+  loop _slt (1, md_slots)
+    _num = _num + int( ytable(md_t1, _slt) )
+    _sum = _sum + ytable(md_t3, _slt)
+  end_loop
+  if _num # _numBall then
+    error = 'Bug in md_SizeDistribution'
+  end_if
+  if abs( _sum - _sumVol ) > 1e-6 then
+    error = 'Bug in md_SizeDistribution'
+  end_if
+  ;
+  ; --- Fill table md_t2.
+  loop _slt (1, md_slots)
+    _sumV = 0.0
+    loop _slt2 (_slt, md_slots)
+      _sumV = _sumV + ytable(md_t3,_slt2)
+    end_loop
+    ytable(md_t2,_slt) = 100. - (_sumV/_sumVol)*100.
+  end_loop
+end
+;======================================================================
+def md_min_ns
+;
+; INPUT: md_bondtype - bond-type indicator (1-contact bonds,
+;                                           2-parallel bonds)
+;
+  if md_bondtype = 1 then
+    md_min_ns = md_strength( 1, 1 )
+    if md_btn = 1 then
+      md_min_ns = md_strength( 3, 1 )
+    end_if
+  else  ; md_bondtype = 2
+    md_min_ns = md_strength( 2, 1 )
+    if md_btn = 1 then
+      md_min_ns = md_strength( 4, 1 )
+    end_if
+  end_if
+end
+;======================================================================
+def md_max_ns
+;
+; INPUT: md_bondtype - bond-type indicator (1-contact bonds,
+;                                           2-parallel bonds)
+;
+  if md_bondtype = 1 then
+    md_max_ns = md_strength( 1, 3 )
+    if md_btn = 1 then
+      md_max_ns = md_strength( 3, 3 )
+    end_if
+  else  ; md_bondtype = 2
+    md_max_ns = md_strength( 2, 3 )
+    if md_btn = 1 then
+      md_max_ns = md_strength( 4, 3 )
+    end_if
+  end_if
+end
+;======================================================================
+def md_min_ss
+;
+; INPUT: md_bondtype - bond-type indicator (1-contact bonds,
+;                                           2-parallel bonds)
+;
+  if md_bondtype = 1 then
+    md_min_ss = md_strength( 1, 4 )
+    if md_btn = 1 then
+      md_min_ss = md_strength( 3, 4 )
+    end_if
+  else  ; md_bondtype = 2
+    md_min_ss = md_strength( 2, 4 )
+    if md_btn = 1 then
+      md_min_ss = md_strength( 4, 4 )
+    end_if
+  end_if
+end
+;======================================================================
+def md_max_ss
+;
+; INPUT: md_bondtype - bond-type indicator (1-contact bonds,
+;                                           2-parallel bonds)
+;
+  if md_bondtype = 1 then
+    md_max_ss = md_strength( 1, 6 )
+    if md_btn = 1 then
+      md_max_ss = md_strength( 3, 6 )
+    end_if
+  else  ; md_bondtype = 2
+    md_max_ss = md_strength( 2, 6 )
+    if md_btn = 1 then
+      md_max_ss = md_strength( 4, 6 )
+    end_if
+  end_if
+end
+; ===================================================================
+def md_pbprops
+;
+; ----- Set parallel-bond properties for all pbonds in model.
+;
+; INPUT:
+;     The parallel-bond microparameters:
+;        pb_all   - all load to be carried in pbonds (global param.)
+;        pb_Rmult - radius multiplier
+;        pb_mfac  - moment-contribution factor
+;        pb_Ec    - Young's modulus of each parallel bond
+;        pb_krat  - ratio of parallel-bond normal to shear stiffness
+;     INTRA-CLUSTER STRENGTHS:  (w/i clusters, or each bond if no clusters)
+;        pb_sn_mean  - mean value of normal strength (stress units)
+;        pb_sn_sdev  - std. deviation of normal strength (stress units)
+;        pb_coh_mean - mean value of cohesion (stress units)
+;        pb_coh_sdev - std. deviation of cohesion (stress units)
+;        pb_phi      - friction angle
+;        For backwards compatibility with PFC2D/3D 4.0 subversions < 142:
+;          If pb_ss_mean is non-zero, then do not use coh and phi.
+;          pb_ss_mean - mean value of shear  strength (stress units)
+;          pb_ss_sdev - std. deviation of shear  strength (stress units)
+;     ------------------------
+;     The two particle-particle microparameters:
+;       ([ba_fric] is set by [md_ballfric])
+;        md_set_balldeform - boolean: if=1, set ball deformability props
+;                                           using following 2 variables:
+;          ba_Ec       - Young's modulus at each particle-particle contact
+;          ba_krat - ratio of particle normal to shear stiffness (kn/ks)
+;
+  if md_set_balldeform = 1 then
+    md_balldeform
+  end_if
+  ;
+  cp = contact_head
+  loop while cp # null
+    if md_pbond = 1 then  ; parallel bond present
+      pbp = c_pb(cp)
+      _mp_ent = cp
+      _idx = _mp_idx
+      ;
+      pb_rad(pbp) = pb_Rmult(_idx)
+      pb_mfac(pbp) = pb_mcf(_idx)
+       _radsum = b_rad(c_ball1(cp)) + b_rad(c_ball2(cp))
+       _kn = pb_Ec(_idx) / _radsum
+       _ks = _kn / pb_krat(_idx)
+      pb_kn(pbp) = _kn
+      pb_ks(pbp) = _ks
+      ;
+       _mean = pb_sn_mean(_idx)
+       _stddev = pb_sn_sdev(_idx)
+       _nstr = md_val_normdist
+      pb_nstrength(pbp) = _nstr
+      ;
+      if pb_ss_mean(_idx) # 0 then
+         _mean = pb_ss_mean(_idx)
+         _stddev = pb_ss_sdev(_idx)
+         _sstr = md_val_normdist
+        pb_sstrength(pbp) = _sstr
+      else
+         _mean = pb_coh_mean(_idx)
+         _stddev = pb_coh_sdev(_idx)
+         _coh = md_val_normdist
+        pb_coh(pbp) = _coh
+        pb_fa(pbp) = pb_phi(_idx)
+      end_if
+      ;
+      if pb_all # 0 then  ; Set contact stiffnesses to zero.
+        c_kn(cp) = 0.0
+        c_ks(cp) = 0.0
+      end_if
+    end_if
+    cp = c_next(cp)
+  end_loop
+  if pb_all # 0 then   ; When pbond is deleted, allow contact stiffnesses
+    command            ; to be derived from ball stiffnesses (see pb_allDEL).
+      SET fishcall #FC_PB_DEL pb_allDEL
+    end_command
+  end_if
+end
+; ------------------------------------
+def pb_allDEL
+  cp = fc_arg(0)
+  c_knset(cp) = 0
+  c_ksset(cp) = 0
+end
+; ===================================================================
+def md_softenprops
+;----set softening-bond properties for all phbonds in model
+  command
+	MODEL udm ductile
+  end_commond
+  cp = contact_head
+  loop while cp # null
+   if c_active # 1 then  ; active contact
+	
+   
+   
+   end_if
+  
+end
+; ===================================================================
+def md_cbprops
+;
+; ----- Set contact-bond properties for all existing contact bonds in model.
+;
+; INPUT:
+;     The six particle-particle microparameters:
+;       ([ba_fric] is not a cbond property, set by [md_ballfric])
+;        md_set_balldeform - boolean: if=1, set ball deformability props
+;                                           using following 2 variables:
+;          ba_Ec       - Young's modulus at each particle-particle contact
+;          ba_krat - ratio of particle normal to shear stiffness (kn/ks)
+;     INTRA-CLUSTER STRENGTHS:  (w/i clusters, or each bond if no clusters)
+;        cb_sn_mean - mean value of normal strength (stress units)
+;        cb_ss_mean - mean value of shear  strength (stress units)
+;        cb_sn_sdev - std. deviation of normal strength (stress units)
+;        cb_ss_sdev - std. deviation of shear  strength (stress units)
+;     ------------------------
+;        md_clusters - boolean: if=1, clusters exist
+;                                     must specify following 5 variables:
+;          cl_bslt - slot in b_extra( bp, [cl_bslt] ) where cluster-info is
+;        INTER-CLUSTER STRENGTHS: (between clusters)
+;          cb_sn_mean_btn - mean value of normal strength (stress units)
+;          cb_ss_mean_btn - mean value of shear  strength (stress units)
+;          cb_sn_sdev_btn - std. deviation of normal strength (stress units)
+;          cb_ss_sdev_btn - std. deviation of shear  strength (stress units)
+;
+  if md_set_balldeform = 1 then
+    md_balldeform
+  end_if
+  ;
+  cp = contact_head
+  loop while cp # null
+    if md_cbond = 1 then  ; contact bond present
+      _mp_ent = cp
+      _idx = _mp_idx
+      _sfac = md_scalefac_cp
+      if _md_usebtn_cp = 1 then
+         _mean = cb_sn_mean_btn * _sfac
+         _stddev = cb_sn_sdev_btn * _sfac
+        _nstr = md_val_normdist
+         _mean = cb_ss_mean_btn * _sfac
+         _stddev = cb_ss_sdev_btn * _sfac
+        _sstr = md_val_normdist
+      else
+         _mean = cb_sn_mean(_idx) * _sfac
+         _stddev = cb_sn_sdev(_idx) * _sfac
+        _nstr = md_val_normdist
+         _mean = cb_ss_mean(_idx) * _sfac
+         _stddev = cb_ss_sdev(_idx) * _sfac
+        _sstr = md_val_normdist
+      end_if
+      c_nstrength(cp) = _nstr
+      c_sstrength(cp) = _sstr
+    end_if
+    cp = c_next(cp)
+  end_loop
+end
+; ===================================================================
+def md_balldeform
+;
+; --- Set the two particle-particle deformability microparameters for
+;     all particles in model.
+;
+; INPUT: ba_Ec()   - Young's modulus at each particle-particle contact
+;        ba_krat() - ratio of particle normal to shear stiffness (kn/ks)
+;
+  bp = ball_head
+  loop while bp # null
+    _mp_ent = bp
+    _idx = _mp_idx
+    if dim = 2 then
+      _kn = 2.0 * ba_Ec(_idx) * 1.0
+    else
+      _kn = 4.0 * ba_Ec(_idx) * b_rad(bp)
+    end_if
+     _ks = _kn / ba_krat(_idx)
+    b_kn(bp) = _kn
+    b_ks(bp) = _ks
+    bp = b_next(bp)
+  end_loop
+end
+; ===================================================================
+def md_ballfric
+;
+; --- Set the friction coefficients for all particles in model.
+;
+; INPUT: ba_fric() - particle friction coefficient
+;
+  bp = ball_head
+  loop while bp # null
+    _mp_ent = bp
+    b_fric(bp) = ba_fric(_mp_idx)
+    bp = b_next(bp)
+  end_loop
+end
+; ===================================================================
+def md_balldens
+;
+; --- Set the density for all particles in model.
+;
+; INPUT: ba_bulk, ba_rho(), ba_vol()
+;
+  Array _sVp(mg_mpN)
+  ;
+  _getsVp = 0
+  loop _i (1, mg_mpN)
+    _sVp(_i) = 0.0
+    if ba_bulk(_i) # 0 then
+      _getsVp = 1
+    end_if
+  end_loop
+  if _getsVp = 1 then
+    bp = ball_head
+    loop while bp # null
+      _mp_ent = bp
+      _idx = _mp_idx
+      if dim = 2 then
+        _sVp(_idx) = _sVp(_idx) + pi*b_rad(bp)*b_rad(bp)*1.0
+      else
+        _sVp(_idx) = _sVp(_idx) + (4.0*pi*b_rad(bp)*b_rad(bp)*b_rad(bp)/3.0)
+      end_if
+      bp = b_next(bp)
+    end_loop
+  end_if
+  ;
+  bp = ball_head
+  loop while bp # null
+    _mp_ent = bp
+    _idx = _mp_idx
+    if ba_bulk(_idx) = 0 then
+      b_dens(bp) = ba_rho(_idx)
+    else
+      b_dens(bp) = ba_rho(_idx) * ba_vol(_idx) / _sVp(_idx)
+    end_if
+    bp = b_next(bp)
+  end_loop
+end
+; ===================================================================
+def mg_wallkn
+  if mv_per # 0 then
+    exit
+  end_if
+  if dim = 2 then
+    mg_wallkn2d
+  else
+    mg_wallkn3d
+  end_if
+end
+; ------------------------------------
+def md_wallkn
+;
+; --- Set the normal stiffness of the wall, with id of [md_wid], as the
+;     specified fraction, [mg_wfac], of average normal stiffness of all
+;     particles in model.
+;
+; INPUT: md_wid    - id of wall
+;        mg_wfac - normal stiffness factor for all walls, specified
+;                      relative to particle-particle modulus
+;
+  _cnt = 0
+  _knsum = 0.0
+  bp = ball_head
+  loop while bp # null
+    _cnt = _cnt + 1
+    _knsum = _knsum + b_kn(bp)
+    bp = b_next(bp)
+  end_loop
+  _knavg = _knsum / _cnt
+  w_kn( find_wall(md_wid) ) = mg_wfac * _knavg
+end
+; ===================================================================
+def md_wun  ; Return effective overlap of wall [md_wp]
+  sum_fn = 0.0
+  sum_kn = 0.0
+  _cnt = 0
+  cp = w_clist(md_wp)
+  loop while cp # null
+    if md_virtual = 0 then
+      sum_fn = sum_fn + c_nforce(cp)
+      sum_kn = sum_kn + c_kn(cp)
+    end_if
+    cp = c_b2clist(cp)
+  end_loop
+  if sum_kn # 0.0 then
+    md_wun = sum_fn / sum_kn
+  else
+    md_wun = 0.0
+  end_if
+end
+;=================================================================
+def _md_usebtn_cp
+;
+  _md_usebtn_cp = 0
+  if md_clusters = 1 then
+    if cl_internal_cp = 0 then
+      _md_usebtn_cp = 1
+    end_if
+  end_if
+end
+;=================================================================
+def md_expand_radii1_sup  ;{i: cp, bp; o: _rcp, _phi}
+;
+  _rcp2 = (c_x(cp) - b_x(bp))^2 + (c_y(cp) - b_y(bp))^2
+  if dim = 3 then
+    _rcp2 = _rcp2 + (c_z(cp) - b_z(bp))^2
+  end_if
+  _rcp = sqrt( _rcp2 )
+  if c_ball1(cp) = bp then
+    gpo = c_ball2(cp)
+  else
+    gpo = c_ball1(cp)
+  end_if
+  if pointer_type(gpo) = 101 then  ; other entity is a wall
+    _phi = b_rad(bp)
+  else                             ; other entity is a ball
+    _phi = b_rad(bp) + b_rad(gpo)
+  end_if
+end
+;=================================================================
+def md_expand_radii1_balls  ;{i/o: _sum}
+;
+  bp = ball_head
+  loop while bp # null  ; balls of model
+    if b_clump(bp) = null then  ; skip balls that are part of clumps
+      cp = b_clist(bp)
+      loop while cp # null  ; contacts of ball
+        if c_active(cp) = 1 then  ; not a virtual contact
+          md_expand_radii1_sup  ;{i: cp, bp; o: _rcp, _phi}
+          _sum = _sum + _rcp * c_kn(cp) * _phi
+        end_if
+        if c_ball1(cp) = bp then  ; get next contact of [bp]
+          cp = c_b1clist(cp)
+        else
+          cp = c_b2clist(cp)
+        end_if
+      end_loop
+    end_if
+    bp = b_next(bp)
+  end_loop
+end
+;=================================================================
+def md_expand_radii1_clumps  ;{i/o: _sum}
+;
+  clp = clump_head
+  loop while clp # null  ; clumps of model
+    bp = cl_list(clp)
+    loop while bp # null  ; balls of clump
+      cp = b_clist(bp)
+      loop while cp # null  ; contacts of ball
+        _internal = 0
+        if c_ball1(cp) = bp then
+          gpo = c_ball2(cp)
+        else
+          gpo = c_ball1(cp)
+        end_if
+        if pointer_type(gpo) = 100 then  ; other entity is a ball
+          if b_clump(gpo) = clp then
+            if b_clump(bp) # clp then
+              error = 'md_expand_radii1_clumps internal consistency error.'
+            end_if
+            _internal = 1
+          end_if
+        end_if
+        ;
+        if _internal = 0 then  ; only consider non-internal contacts
+          if c_active(cp) = 1 then  ; not a virtual contact
+            md_expand_radii1_sup  ;{i: cp, bp; o: _rcp, _phi}
+            _rclx = c_x(cp) - cl_x(clp)
+            _rcly = c_y(cp) - cl_y(clp)
+            _mx = (c_x(cp) - b_x(bp)) / _rcp
+            _my = (c_y(cp) - b_y(bp)) / _rcp
+            _fac = _rclx * _mx + _rcly * _my
+            if dim = 3 then
+              _rclz = c_z(cp) - cl_z(clp)
+              _mz = (c_z(cp) - b_z(bp)) / _rcp
+              _fac = _fac + _rclz * _mz
+            end_if
+            _sum = _sum + c_kn(cp) * _phi * _fac
+          end_if
+        end_if
+        ;
+        if c_ball1(cp) = bp then  ; get next contact of [bp]
+          cp = c_b1clist(cp)
+        else
+          cp = c_b2clist(cp)
+        end_if
+      end_loop
+      bp = b_cllist(bp)
+    end_loop
+    clp = cl_next(clp)
+  end_loop
+end
+;=================================================================
+def md_expand_radii1
+;
+; ----- Support function used by radius-expansion algorithm, which
+;       is applied to all balls iteratively in an attempt to achieve
+;       desired isotropic stress state.
+;
+; INPUT:  _totvol   - total sample volume
+;         _diso     - requested- minus current- isotropic stress
+; OUTPUT: _alpha    - ball radius multiplication factor
+;
+  _sum = 0.0
+  md_expand_radii1_balls  ;{i/o: _sum}
+  md_expand_radii1_clumps  ;{i/o: _sum}
+  ;
+  _lambda = dim  ; will work for PFC2D or PFC3D
+  if _sum <= 0.0 then
+    _alpha = 1.0
+  else
+    _alpha = -1.0 * _lambda * _totvol * _diso / _sum
+  end_if
+end
+; ====================================
+def md_expand_all  ;{i: _alpha; i/o: mg_iso_sfacTot}
+  md_expand_all2a
+  md_expand_all2b
+  md_expand_all2c
+  mg_iso_sfacTot = mg_iso_sfacTot * (1.0 + _alpha)
+end
+; ====================================
+def md_expand_all2a
+  _sfac = 1.0 + _alpha
+  bp = ball_head
+  loop while bp # null
+    if b_clump(bp) = null then  ; skip balls used by clumps
+      if mdp_type_bp # 2 then  ; adjust radii for regular and controllers
+        b_rad(bp) = _sfac * b_rad(bp)
+      end_if
+    end_if
+    bp = b_next(bp)
+  end_loop
+end
+; ====================================
+def md_expand_all2b
+  bp = ball_head
+  loop while bp # null
+    if b_clump(bp) = null then  ; skip balls used by clumps
+      if mdp_type_bp = 1 then  ; adjust radii for slaves of each controller
+        bps = b_perball(bp)
+        loop while bps # null
+          b_rad(bps) = b_rad(bp)
+          bps = b_perball(bps)
+        end_loop
+      end_if
+    end_if
+    bp = b_next(bp)
+  end_loop
+end
+; ====================================
+def md_expand_all2c  ;{i: _alpha}
+;
+  _sfac = 1.0 + _alpha
+  clp = clump_head
+  loop while clp # null
+    oo = cl_scale( clp, _sfac )
+    clp = cl_next(clp)
+  end_loop
+end
+;=================================================================
+def md_bounds
+;
+; OUTPUT: md_minx, md_maxx - max./min x coord of all particles in model
+;         md_miny, md_maxy
+;         md_minz, md_maxz
+;
+  md_minx = 1e30
+  md_maxx = -1e30
+  md_miny = 1e30
+  md_maxy = -1e30
+  if dim = 3 then
+    md_minz = 1e30
+    md_maxz = -1e30
+  end_if
+
+  bp = ball_head
+  loop while bp # null
+    if b_x(bp) < md_minx then
+      md_minx = b_x(bp)
+    end_if
+    if b_x(bp) > md_maxx then
+      md_maxx = b_x(bp)
+    end_if
+
+    if b_y(bp) < md_miny then
+      md_miny = b_y(bp)
+    end_if
+    if b_y(bp) > md_maxy then
+      md_maxy = b_y(bp)
+    end_if
+
+    if dim = 3 then
+      if b_z(bp) < md_minz then
+        md_minz = b_z(bp)
+      end_if
+      if b_z(bp) > md_maxz then
+        md_maxz = b_z(bp)
+      end_if
+    end_if
+
+    bp = b_next(bp)
+  end_loop
+end
+; ===================================================================
+def md_radii
+;
+; ----- Compute the max, min, and avg. radii of all balls in model.
+;
+; OUTPUT: md_rmax - maximum radius of all balls
+;         md_rmin - minimum radius of all balls
+;         md_ravg - average radius of all balls
+  md_rmax = 0.0
+  md_rmin = 1e20
+  md_ravg = 0.0
+  cnt = 0
+  bp     = ball_head
+  loop while bp # null
+    cnt = cnt + 1
+    md_ravg = md_ravg + b_rad(bp)
+    if b_rad(bp) > md_rmax then
+      md_rmax = b_rad(bp)
+    end_if
+    if b_rad(bp) < md_rmin then
+      md_rmin = b_rad(bp)
+    end_if
+    bp = b_next(bp)
+  end_loop
+  md_ravg = md_ravg / cnt
+end
+; ===================================================================
+def md2_radii_annulus
+;
+; ----- Compute the max, min, and avg. radii of all balls in
+;       given annulus centered at (0,0).  (PFC2D only)
+;
+; INPUT:  md2_ann0 - inner radius of annulus
+;         md2_ann1 - outer radius of annulus
+; OUTPUT: md2_rmax - maximum radius of all balls
+;         md2_rmin - minimum radius of all balls
+;         md2_ravg - average radius of all balls
+  md2_rmax = 0.0
+  md2_rmin = 1e20
+  md2_ravg = 0.0
+  cnt = 0
+  bp = ball_head
+  loop while bp # null
+    _brad = sqrt( b_x(bp)^2 + b_y(bp)^2 )
+    if _brad >= md2_ann0 then
+      if _brad < md2_ann1 then
+        cnt = cnt + 1
+        md2_ravg = md2_ravg + b_rad(bp)
+        md2_rmax = max( md2_rmax, b_rad(bp) )
+        md2_rmin = min( md2_rmin, b_rad(bp) )
+      end_if
+    end_if
+    bp = b_next(bp)
+  end_loop
+  if cnt = 0 then
+    md2_ravg = 0.0
+  else
+    md2_ravg = md2_ravg / cnt
+  end_if
+end
+; ===================================================================
+def md_save_state
+;
+; ----- Support function to construct filename and save state.
+;
+; INPUT: md_run_name
+;        md_tag_name
+;
+  if type(md_run_name) # 3 then  ; not a string, assume not yet set
+    md_run_name = ''
+  end_if
+  if type(md_tag_name) # 3 then  ; not a string, assume not yet set
+    mg_tag_name = 'tag'
+  end_if
+  _fname = md_run_name + md_tag_name + string('.sav')
+  command
+    save @_fname
+  end_command
+end
+; ===================================================================
+def md_activate_logfile
+;
+; ----- Turns on a logfile.
+;
+; INPUT: md_run_name - assumed to be <= 4 characters
+;
+  _fname = string(md_run_name) + string('.LOG')
+  command
+    SET logfile @_fname
+    SET log on
+  end_command
+end
+; ===================================================================
+def md_numcon_bp
+;
+; ----- Return number of contacts on ball [bp].  Virtual contacts are
+;       not counted, because virtual contacts have c_nforce(cp) = 0.0.
+;
+; INPUT:  bp           - ball pointer
+; OUTPUT: md_numcon_bp - number of (non-virtual) contacts on ball [bp]
+;
+  md_numcon_bp_ = 0
+  cp   = b_clist(bp)
+  loop while cp # null
+    if c_nforce(cp) # 0.0 then
+      md_numcon_bp_ = md_numcon_bp_ + 1
+    end_if
+    if c_ball1(cp) = bp then
+      cp = c_b1clist(cp)
+    else
+      cp = c_b2clist(cp)
+    end_if
+  end_loop
+  md_numcon_bp = md_numcon_bp_
+end
+;=================================================================
+def md_numballs
+;
+; ----- Return total number of balls in model.
+;
+; OUTPUT: md_numballs - total number of balls in model
+;
+  md_numballs_ = 0
+  bp = ball_head
+  loop while bp # null
+    md_numballs_ = md_numballs_ + 1
+    bp = b_next(bp)
+  end_loop
+  md_numballs = md_numballs_
+end
+; ===================================================================
+def md_numpb
+;
+; ---- Return the number of parallel bonds in entire model.
+;
+  _cnt = 0
+  cp = contact_head
+  loop while cp # null
+    if md_pbond = 1 then
+      _cnt = _cnt + 1
+    end_if
+    cp = c_next(cp)
+  end_loop
+  md_numpb = _cnt
+end
+; ===================================================================
+def md_numcb
+;
+; ---- Return the number of contact bonds in entire model.
+;
+  _cnt = 0
+  cp = contact_head
+  loop while cp # null
+    if md_cbond = 1 then
+      _cnt = _cnt + 1
+    end_if
+    cp = c_next(cp)
+  end_loop
+  md_numcb = _cnt
+end
+; ===================================================================
+def md_cbond
+;
+; ----- Return (1) iff [cp] has an intact contact-bond present.
+;       Be careful to eliminate ball-wall contacts.
+;
+; INPUT: cp
+;
+  _md_cbond = 0
+  if c_bflag(cp) = 1 then  ; cbond props. were created
+    if pointer_type(c_ball2(cp)) = 100 then  ; it is a ball-ball contact,
+                                             ; walls are always c_ball2(cp)
+      _md_cbond = 1
+    end_if
+  end_if
+  md_cbond = _md_cbond
+end
+; ===================================================================
+def md_pbond
+;
+; ----- Return (1) iff [cp] has an intact parallel bond present.
+;
+; INPUT: cp
+;
+  _md_pbond = 0
+  if c_pb(cp) # null then
+    _md_pbond = 1
+  end_if
+  md_pbond = _md_pbond
+end
+; ===================================================================
+def md_virtual
+;
+; ----- Return (1) iff [cp] is a non-virtual contact, which is indicated
+;         by checking that (c_nforce(cp) # 0.0).
+;
+  _md_virtual = 1
+  if c_nforce(cp) # 0.0 then
+    _md_virtual = 0
+  end_if
+  md_virtual = _md_virtual
+end
+; ===================================================================
+def md_val_normdist
+;
+; ---- Return a positive value from a normal distribution with
+;      given mean and standard deviation.
+;
+; INPUT: _mean, _stddev
+;
+  loop while 1 # 0  ; loop until _val > 0.0
+    _val = _mean + _stddev * grand
+    if _val > 0.0 then
+      md_val_normdist = _val
+      exit
+    end_if
+  end_loop
+end
+; ===================================================================
+def md_scalefac_cp
+;
+; ---- Returns scale-factor, <sf>, that relates microforce at a contact
+;        to microstress at a contact such that
+;        microforce = <sf> * microstress
+;
+; INPUT: cp        - contact pointer
+;
+  _avgrad = 0.5 * ( b_rad(c_ball1(cp)) + b_rad(c_ball2(cp)) )
+  if dim = 2 then
+    md_scalefac_cp = 2.0 * 1.0 * _avgrad
+  else  ; dim = 3
+    md_scalefac_cp = 4.0 * _avgrad * _avgrad
+  end_if
+end
+; ===================================================================
+def md_eq
+;
+; ----- Attempt to reach equilibrium (see [md_eq_stat] for exit conditions)
+;       by applying the SOLVE RATIO command.
+;
+; INPUT: md_eq_sr    - {0,1,2} = SET SOLVE_RATIO {max, average, local}
+;        md_eq_rat   - equilibrium ratio limit
+;        md_eq_steps - maximum step limit (steps taken while in this func.)
+;        md_eq_int   - subinterval over which to check for ratio limit
+;        md_eq_lim   - optional function for user-defined exit condition
+;
+; OUTPUT: md_eq_stat:
+;              (0) obtained equil.
+;              (1) cannot obtain equil. after [md_eq_steps]
+;              (9) user-defined limit reached [md_eq_lim]
+;             (-1) premature exit of this function
+;
+  if md_eq_rat = 0 then    ; default
+    md_eq_rat = 1e-5
+  end_if
+  if md_eq_steps = 0 then  ; default
+    md_eq_steps = 1000
+  end_if
+  if md_eq_int = 0 then    ; default
+    md_eq_int = 500
+  end_if
+  ;
+  md_eq_stat = -1
+  command
+    cycle 10  ; md_eq: force system changes before SOLVing
+  end_command
+  ;
+  case_of md_eq_sr
+    ; default
+      command
+        SET SOLVE_RATIO maximum
+      end_command
+    case 1 :
+      command
+        SET SOLVE_RATIO average
+      end_command
+    case 2 :
+      command
+        SET SOLVE_RATIO local
+      end_command
+  end_case
+  ;
+  _md_cnt = 0
+  _md_exit = 0
+  loop while _md_exit = 0
+    ii = out('***** [md_eq]:   md_eq_rat = '+string(md_eq_rat))
+    ii = out('                 md_eq_int = '+string(md_eq_int))
+    ii = out('               md_eq_steps = '+string(md_eq_steps))
+    _step0 = step
+    command
+      SOLVE ratio=@md_eq_rat  steps=@md_eq_int
+    end_command
+    _solve_steps = step - _step0 - 1
+    _md_cnt = _md_cnt + _solve_steps
+    if _md_cnt >= md_eq_steps then
+      md_eq_stat = 1
+      exit
+    end_if
+    ;
+    if _solve_steps # md_eq_int then
+      _md_exit = 1
+    else
+      _md_exit = 0
+      if md_eq_lim = 1 then
+        md_eq_stat = 9
+        exit
+      end_if
+    end_if
+  end_loop
+  md_eq_stat = 0
+end
+; ===================================================================
+def md_ts_go
+;
+; ----- Cycle until total elapsed time equals [md_ts].  Reduce the final
+;       timestep, if necessary, to achieve exact match.
+;
+; INPUT: md_ts - desired elapsed time
+;
+  md_ts0
+  command
+    solve aver=0.0 max=0.0 fishhalt md_ts1
+  end_command
+end
+; ------------------------------------------
+def md_sumdtFunc
+  md_sumdt = md_sumdt + tdel
+end
+; ------------------------------------------
+def md_ts0
+  md_sumdt = 0.0
+  command
+    set fishcall #FC_CYC_MOT md_sumdtFunc
+    set dt max @md_ts  ; first step must be limited
+    set echo off
+  end_command
+end
+; ------------------------------------------
+def md_ts1
+  if md_sumdt < md_ts then
+    _remdt = md_ts - md_sumdt
+    command
+      set dt max @_remdt
+    end_command
+    md_ts1 = 0  ; do not halt
+  else
+    command
+      set dt max 1e20  ; remove max-dt limit
+      set dt auto
+      set fishcall #FC_CYC_MOT remove md_sumdtFunc
+      set echo on
+    end_command
+    md_ts1 = 1  ; halt
+  end_if
+end
+; ===========================================================================
+def mdp_type_bp
+;
+; ----- Return the type of ball as {0,1,2} = {regular, controller, slave}.
+;       Controller and slave only possible if PERIODIC=ON.
+;
+  _mdp_type_bp = 0
+  if and(b_perflag(bp),1) # 0 then  ; controller
+    _mdp_type_bp = 1
+  else
+    if and(b_perflag(bp),14) # 0 then  ; slave
+      _mdp_type_bp = 2
+    end_if
+  end_if
+  mdp_type_bp = _mdp_type_bp
+end
+; ===========================================================================
+def _mdp_ntcc
+;
+; ----- Return the Number of True Contacts of a Controller [bp].
+;
+  if mdp_type_bp # 1 then
+    error = '[_md_ntcc]: ball [bp] is not a controller.'
+  end_if
+  ;
+  bp1 = ball_head       ; Clear all ball-marks
+  loop while bp1 # null
+    b_extra(bp1,1) = and( b_extra(bp1,1), 2 ) ; clear bit-1
+    bp1 = b_next(bp1)
+  end_loop
+  ;
+  _cnt = 0
+  cp   = b_clist(bp)
+  loop while cp # null  ; visit all contacts of this controller
+    if c_nforce(cp) # 0.0 then  ; if non-virtual, count and mark relations
+      if c_ball1(cp) = bp then
+        _bo = c_ball2(cp)
+      else
+        _bo = c_ball1(cp)
+      end_if
+      _cnt = _cnt + 1
+      _mdp_mbo  ; mark [_bo] and its relations
+    end_if
+    ;
+    if c_ball1(cp) = bp then
+      cp = c_b1clist(cp)
+    else
+      cp = c_b2clist(cp)
+    end_if
+  end_loop
+  ;
+  bps = b_perball(bp)  ; bp is a controller
+  loop while bps # null  ; visit all slaves and count as necessary
+    cp = b_clist(bps)
+    loop while cp # null  ; visit all contacts of this slave
+      if c_nforce(cp) # 0.0 then  ; if non-virtual, . . .
+        if c_ball1(cp) = bps then
+          _bo = c_ball2(cp)
+        else
+          _bo = c_ball1(cp)
+        end_if
+        if and( b_extra(_bo,1), 1 ) = 0 then  ; bit-1 is not set
+          _cnt = _cnt + 1
+          _mdp_mbo  ; mark [_bo] and its relations
+        end_if
+      end_if
+      ;
+      if c_ball1(cp) = bps then
+        cp = c_b1clist(cp)
+      else
+        cp = c_b2clist(cp)
+      end_if
+    end_loop
+    ;
+    bps = b_perball(bps)
+  end_loop
+  _mdp_ntcc = _cnt
+end
+; ===========================================================================
+def _mdp_mbo  ; mark [_bo] and its relations, relies upon fact that all
+;                related balls have same ID.
+;
+  b_extra(_bo,1) = or( b_extra(_bo,1), 1 )  ; set bit-1
+  bp1 = ball_head
+  loop while bp1 # null
+    if b_id(bp1) = b_id(_bo) then
+      b_extra(bp1,1) = or( b_extra(bp1,1), 1 )  ; set bit-1
+    end_if
+    bp1 = b_next(bp1)
+  end_loop
+end
+; ===========================================================================
+def md_numtcon_bp
+;
+; ----- Return the number of true contacts of ball [bp].  This function
+;       handles case of periodic space on as follows.
+;         REGULAR    - number of non-virtual contacts
+;         CONTROLLER - number of true contacts (see [_mdp_ntcc])
+;         SLAVE      - number of non-virtual contacts, note that this is
+;                        not number of true contacts
+;
+  case_of mdp_type_bp
+    case 0 :  ; REGULAR
+      md_numtcon_bp = md_numcon_bp
+    case 1 :  ; CONTROLLER
+      md_numtcon_bp = _mdp_ntcc
+    case 2 :  ; SLAVE
+      md_numtcon_bp = md_numcon_bp
+  end_case
+end
+; ===========================================================================
+def md_sig0
+  if dim = 2 then
+    md_sig0 = et2_sig0
+  else
+    md_sig0 = et3_sig0
+  end_if
+end
+; ===========================================================================
+def md_iso
+;
+; ----- Scale the particles and clumps iteratively to obtain the target
+;       isotropic stress.  Scaling is self-similar via CLUMP SCALE command.
+;       If system unpacks, then scale back to last okay state and retry.
+;
+; INPUT: _totvol    - total specimen volume
+;        mg_ts0     - target value of isotropic stress
+;        mg_ttol    - stopping tolerance
+;
+; OUTPUT: mg_iso_sfacTot - total scale factor, multiplication of (1.0+_alpha)
+;
+  mg_iso_sfacTot = 1.0
+  _md_alphaSet = 0
+  _md_iso_rdx = 1.0
+  loop while 1 # 0  ; infinite loop
+    _str = '***** [md_iso]: total scale factor applied = '
+    _str = _str + string(mg_iso_sfacTot)
+    ii = out( _str )
+    _str = '                system isotropic stress = '
+    _str = _str + string(md_sig0)
+    ii = out( _str )
+    ;
+    _delsig = mg_ts0 - md_sig0
+    if abs(_delsig/mg_ts0) <= mg_ttol then
+      exit
+    end_if
+    if _md_alphaSet = 0 then
+      _diso = _delsig
+      md_expand_radii1 ;{i: _totvol, _diso; o: _alpha}
+    end_if
+    _alpha = _alpha * _md_iso_rdx
+    md_expand_all  ;{i: _alpha; i/o: mg_iso_sfacTot}
+    ;
+    _md_alphaSet = 0
+    md_eq_rat = mg_iso_rat
+    md_eq_steps = mg_iso_steps
+    md_eq_int = mg_iso_steps
+    md_eq  ;{o: md_eq_stat}
+    if md_eq_stat = 1 then
+      _str = '***** [md_iso]: Failed to reach equilibrium after '
+      _str = _str + string(mg_iso_steps) + ' steps since last equil.'
+      ii=out(_str)
+      _str = '      Total scale factor applied = '
+      _str = _str + string(mg_iso_sfacTot)
+      ii=out(_str)
+      _alpha = ( 1.0 / (1.0 + _alpha) ) - 1.0  ; return to last good
+      _md_alphaSet = 1
+      _md_iso_rdx = _md_iso_rdx * 0.75
+      _str = '      Rescaling particles & clumps to last good size '
+      _str = _str + 'and decreasing reduction factor to '
+      _str = _str + string(_md_iso_rdx)
+      ii=out(_str)
+    end_if
+  end_loop
+end
+;============================================================================
+def kc_carve
+;
+; ----- Create the crack by identifying contacts lying on it (via c_ondisk),
+;       and then either (a) deleting any contact bonds or parallel bonds
+;       of these contacts (if kc_sj = 0), or (b) assigning a smooth-joint
+;       contact model to these contacts (if kc_sj # 0).
+;
+; INPUT: mt_ka  - half length of crack
+;        mt_ksj - boolean, #0: assign sj contacts
+;        sj_plus - boolean, if #0 then assign udm_SmoothJointPlus model
+;
+; OUTPUT: kc_cnt - number of contacts lying on the crack
+;
+  if dim = 3 then
+    if mv_shape # 0 then
+      error = 'kc_carve requires that mv_shape = 0'
+    end_if
+  end_if
+  ;
+  _cenx = 0.0
+  _ceny = 0.0
+  if dim = 2 then
+    _rad = mt_ka
+    _dip = 0.0*degrad
+  else
+    _cenz = 0.0
+    _rad = max( mv_Wx, mv_Wz )  ; disk covers entire xy-plane cross section
+    _dip = 90.0*degrad
+    _dd = 0.0*degrad
+  end_if
+  ;
+  kc_cnt = 0
+  cp = contact_head
+  loop while cp # null
+    if md_c_ondisk # 0 then          ; 3D: "on" xy-plane
+      _onrect = 0
+      if dim = 2 then
+        _onrect = 1
+      else
+        if c_x(cp) <= mt_ka then     ; within extent of crack
+          if c_x(cp) >= -mt_ka then
+            _onrect = 1
+          end_if
+        end_if
+      end_if
+      if _onrect = 1 then
+        kc_cnt = kc_cnt + 1
+        if mt_ksj # 0 then
+          if sj_plus # 0 then
+            c_model(cp) = 'udm_SmoothJointPlus'
+          else
+            c_model(cp) = 'udm_SmoothJoint'
+          end_if
+          c_prop(cp, 'sj_dip') = _dip/degrad
+          c_prop(cp, 'sj_bmode') = 0
+          if dim = 3 then
+            c_prop(cp, 'sj_dd') = _dd/degrad
+          end_if
+        else
+          if c_bflag(cp) # 0 then
+            c_nstrength(cp) = 0.0
+            c_sstrength(cp) = 0.0
+          end_if
+          if c_pb(cp) # null
+            pbp = c_pb(cp)
+            pb_nstrength(pbp) = 0.0
+            pb_sstrength(pbp) = 0.0
+          end_if
+        end_if
+      end_if
+    end_if
+    cp = c_next(cp)
+  end_loop
+  command
+    cycle 1  ; force pbonds to break
+  end_command
+end
+; ====================================
+def kc_pi_geom
+  plot_item
+;
+; ----- Plotitem for visualizing geometry of the crack.
+;       Draw the crack as: line (2D) or polygon (3D) of color 0.
+;
+; INPUT: mt_ka
+;        kc_pi_width - line width (0 to 3, 0 is thinnest)
+;
+  stat = set_color( 0 )
+  if dim = 2 then
+    stat = set_line_width( kc_pi_width )
+     _md_pt1(1) = -mt_ka
+     _md_pt1(2) = 0.0
+     _md_pt2(1) = mt_ka
+     _md_pt2(2) = 0.0
+    stat = draw_line( _md_pt1, _md_pt2 )
+  else
+    _md_poly(1,1) = mt_ka
+    _md_poly(2,1) = 0.0
+    _md_poly(3,1) = 0.5*mv_Wz
+    _md_poly(1,2) = -mt_ka
+    _md_poly(2,2) = 0.0
+    _md_poly(3,2) = 0.5*mv_Wz
+    _md_poly(1,3) = -mt_ka
+    _md_poly(2,3) = 0.0
+    _md_poly(3,3) = -0.5*mv_Wz
+    _md_poly(1,4) = mt_ka
+    _md_poly(2,4) = 0.0
+    _md_poly(3,4) = -0.5*mv_Wz
+    stat = fill_poly( _md_poly, 4 )
+  end_if
+end
+; ====================================
+def kc_pbShrink
+;
+; ----- Multiply the radius multipliers of all pbonds by [kc_pbMult].
+;       This is used to help visualize the pbonds with the pbond plotitem.
+;
+; INPUT: kc_pbMult
+;
+  if kc_pbMult = 0 then
+    kc_pbMult = 0.1
+  end_if
+  ;
+  cp = contact_head
+  loop while cp # null
+    if c_pb(cp) # null
+      pbp = c_pb(cp)
+      pb_rad(pbp) = kc_pbMult * pb_rad(pbp)
+    end_if
+    cp = c_next(cp)
+  end_loop
+  command
+    cycle 1
+  end_command
+end
+; ------------------------------------
+def md_gd_KIc
+  ii=out('***** KIc test results follow. . .')
+  ii=out('      md_run_name = '+string(md_run_name))
+  ii=out('      md_numballs = '+string(md_numballs))
+   _str = '===== Peak axial stress: ' + string(pk_sigtStar)
+  ii=out( _str )
+   _str = '===== Mode-I fracture toughness (KIc) for a through-thickness'
+   _str = _str + ' crack'
+  ii=out( _str )
+   ii=out('      in a middle-tension panel:')
+   ii=out('      (crack half length = '+string(mt_ka)+')')
+   ii=out('      (typical SI units are N*m^(-3/2) = Pa * sqrt(m))')
+   ii=out('        KIc = ' + string(md_KIc))
+end
+; ------------------------------------
+def md_KIc
+;
+; ----- Compute KIc for through-thickness crack in middle-tension panel
+;       using solution in Figure 12.1d of Anderson (1991).
+;
+;       REFERENCE
+;         Anderson, T.L. (1991) Fracture Mechanics: Fundamentals and
+;         Applications, Boca Raton: CRC Press.
+;
+  _sigC = pk_sigtStar
+  _a = mt_ka
+  if dim = 2 then
+    _W = 0.5*mv_W
+  else
+    _W = 0.5*mv_Wx
+  end_if
+  _aOverW = _a / _W
+  _f1 = pi*_a/(4.0*_W) / cos(pi*_a/(2.0*_W))
+  _f2 = 1.0 - 0.025*_aOverW^2 + 0.06*_aOverW^4
+  _f = sqrt(_f1) * _f2
+  md_KIc = _sigC * _f * 2.0 * sqrt(_W)
+end
+;============================================================================
+return
+;EOF: md.fis
